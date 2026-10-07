@@ -46,9 +46,31 @@ def test_registry_covers_all_routing_fields():
     assert full_minute["field"] == "full_minute_data_provider"
     assert full_minute["tf_tier"] == "expert"
     for cap in CAPABILITY_REGISTRY:
-        assert cap["default"] == "tickflow"
+        assert cap["default"] == "mootdx"
         assert cap["tf_tier"] in ("none", "starter", "pro", "expert")
         assert "follow" not in cap
+
+
+def test_matrix_defaults_all_capabilities_to_mootdx(monkeypatch):
+    """未保存路由偏好时, 七项能力默认由可用的 mootdx 提供。"""
+    datasets = [cap["id"] for cap in CAPABILITY_REGISTRY]
+    _fake_sources(
+        monkeypatch,
+        [{
+            "name": "mootdx",
+            "display_name": "mootdx",
+            "datasets": datasets,
+            "available": True,
+            "status": "ok",
+        }],
+    )
+
+    matrix = build_capability_matrix({}, tickflow_tier="none")
+
+    assert len(matrix["capabilities"]) == 7
+    for cap in matrix["capabilities"]:
+        assert cap["current"] == cap["effective"] == "mootdx"
+        assert cap["usable"] is True
 
 
 def test_matrix_without_third_party_sources(monkeypatch):

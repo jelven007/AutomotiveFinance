@@ -272,7 +272,7 @@ function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   )
 }
 
-// ===== Step 2: 配置第三方数据源 (默认内置源; 可添加自有数据源) =====
+// ===== Step 2: 配置数据源 (默认 mootdx; 可添加自有数据源) =====
 
 /** datasets 标签的中文名 (与设置页数据集口径一致) */
 const DATASET_LABELS: Record<string, string> = {
@@ -330,9 +330,9 @@ function DataSourceStep({ onNext, onBack }: { onNext: () => void; onBack: () => 
         if (vars.name === 'tickflow') {
           setSaved(`TickFlow Key 已保存${data.tier_label ? `,当前档位:${data.tier_label}` : ''}`)
         } else if (vars.name === 'fuyao' && data.plugin_available) {
-          // fuyao 定位为增强源: 仅实时行情 + 除权因子路由过去, 其余数据集保持 TickFlow
+          // fuyao 定位为增强源: 仅实时行情 + 除权因子路由过去, 其余数据集保持当前配置
           routeFuyaoEnhanced.mutate()
-          setSaved('fuyao Key 已保存:实时行情与除权因子已切换到 fuyao,其余数据集保持 TickFlow')
+          setSaved('fuyao Key 已保存:实时行情与除权因子已切换到 fuyao,其余数据集保持当前配置')
         } else if (data.plugin_available) {
           setSaved('Key 已保存,该数据源已就绪')
         }
@@ -361,7 +361,7 @@ function DataSourceStep({ onNext, onBack }: { onNext: () => void; onBack: () => 
     },
     {
       name: 'fuyao', display: 'fuyao', env: 'FUYAO_API_KEY', configured: fuyaoConfigured, autoFocus: false,
-      copy: '仅存本地 (secrets.json),先验证后保存。保存成功后仅「实时行情」与「除权因子」切换到 fuyao,其余数据集保持 TickFlow。',
+      copy: '仅存本地 (secrets.json),先验证后保存。保存成功后仅「实时行情」与「除权因子」切换到 fuyao,其余数据集保持当前配置。',
       register: { label: '前往 fuyao 官网申请 Key', url: 'https://fuyao.aicubes.cn' },
     },
   ]
@@ -375,7 +375,7 @@ function DataSourceStep({ onNext, onBack }: { onNext: () => void; onBack: () => 
         <h2 className="text-xl font-bold text-foreground">配置数据源</h2>
       </div>
       <p className="mt-2.5 text-sm text-secondary leading-relaxed">
-        默认使用内置 <span className="text-foreground font-medium">TickFlow</span> 数据源(无需 Key 即可同步历史日K)。
+        默认使用 <span className="text-foreground font-medium">mootdx</span> 数据源，无需 API Key。
         可按下方的说明填写 API Key 增强数据能力;数据源的切换与增删随时在
         <span className="text-foreground font-medium"> 设置 → 数据源 </span>中进行。
       </p>
@@ -552,8 +552,9 @@ function DataSourceStep({ onNext, onBack }: { onNext: () => void; onBack: () => 
 // 不再以 TickFlow 档位为中心 —— 多源下各数据集独立路由, 矩阵即真相。
 // 进入本步时按默认优先级自动设置路由: 前者可用的能力归前者, 没有则顺延下一个可用源。
 
-// 自动路由的默认优先级 (前者可用的能力优先归前者)
+// 自动路由的默认优先级 (mootdx 可用时接管全部能力)
 const ROUTE_PRIORITY = [
+  { name: 'mootdx', display: 'mootdx' },
   { name: 'tickflow', display: 'TickFlow' },
   { name: 'fuyao', display: 'fuyao' },
 ]
@@ -602,7 +603,7 @@ function ResultStep({ onNext, onBack }: { onNext: () => void; onBack: () => void
       .catch(e => setApplyError(`自动设置能力路由失败: ${(e as Error).message}`))
   }, [matrix.data])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const activeName = prefs.data?.daily_data_provider || 'tickflow'
+  const activeName = prefs.data?.daily_data_provider || 'mootdx'
   const isTickflow = activeName === 'tickflow'
   const routes = matrix.data?.capabilities ?? []
   // 是否配置成功 —— 免费档(free)或付费档(api_key)都算;None 档算未配置
@@ -619,7 +620,7 @@ function ResultStep({ onNext, onBack }: { onNext: () => void; onBack: () => void
       </div>
       <p className="mt-2.5 text-sm text-secondary leading-relaxed">
         进入本步时已按默认优先级
-        <span className="text-foreground font-medium"> TickFlow → fuyao </span>
+        <span className="text-foreground font-medium"> mootdx → TickFlow → fuyao </span>
         自动设置各数据集的路由:前者可用的能力归前者,没有则顺延下一个可用源。后续可随时在
         <span className="text-foreground font-medium"> 设置 → 数据源 </span>按数据集改选。
       </p>

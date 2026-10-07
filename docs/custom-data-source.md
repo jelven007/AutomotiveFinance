@@ -1,6 +1,6 @@
 # 自定义数据源接入
 
-本项目默认使用 TickFlow。自定义数据源是一个可选扩展: 外部 HTTP 服务负责取数和整理, 本项目只把返回结果映射成内部标准字段, 然后复用现有存储、指标、enriched、策略和前端展示逻辑。
+本项目默认使用 mootdx。自定义数据源是一个可选扩展: 外部 HTTP 服务负责取数和整理, 本项目只把返回结果映射成内部标准字段, 然后复用现有存储、指标、enriched、策略和前端展示逻辑。
 
 ## 支持范围
 
@@ -232,7 +232,7 @@ cp docs/examples/custom-data-source/mock_source.yaml data/data_sources/mock_sour
 5. 保存数据源选择:
 
 - 日K: `mock_source`
-- 除权因子: `mock_source` (或保持默认 `tickflow`)
+- 除权因子: `mock_source` (或保持默认 `mootdx`)
 - 实时行情: `mock_source`
 
 6. 触发同步或开启实时行情。

@@ -280,6 +280,10 @@ def test_regime_phase_relabel_interrupted_keeps_history(tmp_path: Path, crash, m
 def test_pool_cache_interrupted_keeps_previous_cache(tmp_path: Path, crash, monkeypatch) -> None:
     """缓存一旦是半截文件, get_pool 每次先 read_parquet 就抛错, 不会自愈。"""
     monkeypatch.setattr(pools.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(
+        "app.services.preferences.get_daily_data_provider",
+        lambda: "tickflow",
+    )
     monkeypatch.setattr(pools, "_fetch_pool", lambda pool_id: ["600036.SH"])
     target = tmp_path / "pools" / "CN_Equity_A.parquet"
     old = pl.DataFrame({"symbol": ["600000.SH"], "as_of": [date(2026, 3, 2)]})

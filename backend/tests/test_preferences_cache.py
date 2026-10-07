@@ -71,6 +71,30 @@ def test_load_returns_copy_not_cached_object(_isolated):
     assert again == {"k": [1, 2]}
 
 
+@pytest.mark.parametrize(
+    ("field", "getter"),
+    [
+        ("daily_data_provider", preferences.get_daily_data_provider),
+        ("adj_factor_provider", preferences.get_adj_factor_provider),
+        ("minute_data_provider", preferences.get_minute_data_provider),
+        ("full_minute_data_provider", preferences.get_full_minute_data_provider),
+        ("depth5_data_provider", preferences.get_depth5_data_provider),
+        ("realtime_data_provider", preferences.get_realtime_data_provider),
+        ("financial_data_provider", preferences.get_financial_provider),
+    ],
+)
+def test_data_provider_defaults_to_mootdx_but_preserves_explicit_choice(
+    _isolated,
+    field,
+    getter,
+):
+    assert getter() == "mootdx"
+
+    preferences.save({field: "tickflow"})
+
+    assert getter() == "tickflow"
+
+
 def test_mining_schedule_defaults_are_disabled(_isolated):
     assert preferences.get_mining_schedule() == {
         "mining_schedule_enabled": False,

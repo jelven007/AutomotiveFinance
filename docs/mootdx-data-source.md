@@ -6,9 +6,10 @@ mootdx 作为内置 Python 插件接入现有 Provider、同步服务、Parquet/
 
 ## 安装与启用
 
-1. 启动 `./dev.sh`，打开 `http://localhost:3011/settings?tab=data-sources`。
-2. 在 mootdx 卡片点击「安装」。已安装时显示可用状态。
-3. 点击「套用」，或在能力路由逐项选择 mootdx。七项均应为 mootdx：
+1. 项目首次启动时，七项数据能力默认路由到 mootdx。
+2. Docker 镜像已预装依赖；源码环境若显示未就绪，在
+   `http://localhost:3011/settings?tab=data-sources` 的 mootdx 卡片点击「安装」。
+3. 已保存过其他路由的存量环境可点击「套用」，或逐项选择 mootdx。七项均应为 mootdx：
    日K、除权因子、实时行情、分钟K、五档盘口、财务数据、全量分钟。
 4. 在数据管理页按需同步。股票、指数、ETF 的日线和目录跟随日K源；
    财务和分钟分别使用各自配置。先用少量证券验证，再扩大范围。
