@@ -13,7 +13,8 @@ mootdx 作为内置 Python 插件接入现有 Provider、同步服务、Parquet/
 4. 在数据管理页按需同步。股票、指数、ETF 的日线和目录跟随日K源；
    财务和分钟分别使用各自配置。先用少量证券验证，再扩大范围。
 
-手动安装（在 `backend/` 内）：
+Docker 镜像已预装 mootdx 运行依赖，重建容器后无需重复安装。Dev/源码模式
+首次启用时可在设置页点击「安装」，或在 `backend/` 内手动执行：
 
 ```bash
 uv pip install -p .venv/bin/python -r app/plugins/mootdx/requirements.txt

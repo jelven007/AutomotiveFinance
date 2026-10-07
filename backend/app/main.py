@@ -54,14 +54,20 @@ from app.extensions.loader import (
 from app.jobs import daily_pipeline
 from app.services.matrix_prewarm_owner import MatrixCachePrewarmOwner
 from app.services.mining_process_lock import MiningProcessLock
+from app.services.observability import (
+    ObservabilityMiddleware,
+    install_log_record_factory,
+    request_id_server_error,
+)
 from app.services.quote_service import QuoteService
 from app.tickflow import client as tf_client
 from app.tickflow.policy import detect_capabilities
 from app.tickflow.repository import DataStore, KlineRepository
 
+install_log_record_factory()
 logging.basicConfig(
     level=settings.log_level,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s request_id=%(request_id)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -81,7 +87,10 @@ if not getattr(sys, "frozen", False):
             mode="a", encoding="utf-8", errors="replace",
         )
         _file_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s "
+                "request_id=%(request_id)s: %(message)s"
+            )
         )
         logging.getLogger().addHandler(_file_handler)
     except Exception as _e:  # noqa: BLE001
@@ -431,6 +440,7 @@ app = FastAPI(
     version=__version__,
     description="A 股选股 + 回测面板 — TickFlow 适配",
     lifespan=lifespan,
+    exception_handlers={Exception: request_id_server_error},
 )
 
 # CORS: 允许局域网访问 (自托管场景, 放开所有来源)
@@ -519,6 +529,10 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     # 未登录: 401(前端跳登录页)
     return JSONResponse(status_code=401, content={"detail": "未登录或会话已过期"})
+
+
+# 后注册的中间件位于认证层外侧, 因而认证拒绝也会获得请求 ID 并进入指标。
+app.add_middleware(ObservabilityMiddleware, router=app.router)
 
 
 # 路由

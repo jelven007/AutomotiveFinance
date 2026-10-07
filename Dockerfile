@@ -86,6 +86,16 @@ RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
     done; \
     uv sync --frozen "$@"
 
+# 内置 mootdx 在容器内预装，避免通过设置页安装后因重建容器丢失。
+# 主包跳过其旧版 httpx 依赖，继续使用后端锁文件中的兼容版本。
+COPY backend/app/plugins/mootdx/requirements.txt \
+     backend/app/plugins/mootdx/requirements-no-deps.txt \
+     /tmp/mootdx/
+RUN uv pip install --python /app/.venv/bin/python -r /tmp/mootdx/requirements.txt \
+    && uv pip install --python /app/.venv/bin/python --no-deps \
+       -r /tmp/mootdx/requirements-no-deps.txt \
+    && rm -rf /tmp/mootdx
+
 # Backend code
 # 注意:Docker 里 WORKDIR=/app, 而 config.py 的 _PROJECT_ROOT 是按开发布局
 # (<root>/backend/app/) 推导的, 容器内会错算到 /。这里用环境变量显式指定

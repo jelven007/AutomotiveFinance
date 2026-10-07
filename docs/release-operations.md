@@ -18,7 +18,7 @@
 | --- | --- | --- | --- |
 | CI 结果 | `.github/workflows/ci.yml` | push/PR 到 `main` | 后端全量测试；前端 test、lint、build |
 | GHCR 镜像 | `.github/workflows/docker.yml` | `main` CI 成功、`v*` tag、手动 | `linux/amd64`、`linux/arm64` |
-| 桌面安装包 | `.github/workflows/release.yml` | 手动 | Windows x64、macOS ARM64、Linux x64 |
+| 桌面安装包 | `.github/workflows/release.yml` | 手动且质量门通过 | Windows x64、macOS ARM64、Linux x64 |
 | GitHub Release | 桌面发布 workflow | 手动 | 允许分平台追加资产 |
 | 更新清单 | `latest.json` | 桌面产物后 | 仅列实际存在资产及 SHA-256 |
 | MCP 包 | `mcp-server/` | 独立维护 | 版本不必与主应用完全同步 |
@@ -27,6 +27,9 @@
 `v*` tag 和手动触发会在 Docker workflow 内重新执行后端、前端质量门，通过后
 才构建镜像。Dockerfile 的 pnpm 与 uv 安装使用锁文件冻结模式，不允许锁文件
 不一致时退回非冻结解析；Codex CLI 使用固定版本构建参数。
+
+桌面 workflow 同样先执行后端全量测试和前端 test、lint、build，再启动所选平台
+的打包矩阵。手动触发不再构成绕过质量门的路径。
 
 ## 3. 版本规则
 
@@ -152,10 +155,12 @@ gh workflow run release.yml \
 Silicon。workflow 会：
 
 1. 校验输入版本与 `frontend/package.json`。
-2. 构建前端和后端运行环境。
-3. 使用 PyInstaller 构建应用。
-4. 生成所选平台安装包并上传 GitHub Release。
-5. 汇总 Release 上已存在的目标资产，生成带 SHA-256 的 `latest.json`。
+2. 在 Ubuntu 质量门中执行后端 frozen 安装和全量 pytest。
+3. 在同一质量门中执行前端 frozen 安装、Vitest、ESLint 和生产构建。
+4. 质量门通过后构建前端和各平台后端运行环境。
+5. 使用 PyInstaller 构建应用。
+6. 生成所选平台安装包并上传 GitHub Release。
+7. 汇总 Release 上已存在的目标资产，生成带 SHA-256 的 `latest.json`。
 
 允许分批补齐平台，因此单个平台成功不代表所有平台已发布。每次发布后检查：
 
@@ -217,8 +222,9 @@ Silicon。workflow 会：
 - 磁盘、内存、CPU 和数据增长。
 - 用户反馈中的版本、数据源、日期和复现条件。
 
-当前仓库没有集中遥测或运营分析平台。上述指标需从应用页面、日志和部署环境采集，
-不能虚构“无反馈即无问题”。
+当前仓库提供受会话保护的 `/api/observability` 进程内 HTTP 快照，但没有集中
+遥测、长期指标留存或运营分析平台。上述指标仍需结合应用页面、日志和部署环境
+采集，不能虚构“无反馈即无问题”。
 
 ## 11. 回滚
 
@@ -311,9 +317,9 @@ Silicon。workflow 会：
 
 以下能力在 `0.3.3` 尚未自动化，发布时需人工控制：
 
-- Docker 发布不会等待 CI 成功。
 - 没有自动化 Web 端到端和视觉回归门禁。
 - 没有真实 Provider 的稳定发布环境。
+- 没有桌面安装、升级和卸载的真实平台自动化烟测。
 - 没有自动备份、恢复验证、灰度和业务回滚。
 - 没有集中监控、告警、错误聚合和运营指标。
 - 没有自动生成完整 changelog 与需求追踪矩阵。

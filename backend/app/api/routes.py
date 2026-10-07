@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app import __version__
 from app.config import settings
@@ -10,6 +11,36 @@ from app.tickflow import client as tf_client
 from app.tickflow.policy import detect_capabilities, tier_label
 
 router = APIRouter()
+
+
+class DurationMetrics(BaseModel):
+    sum: float
+    max: float
+    average: float
+
+
+class HttpMetricAggregate(BaseModel):
+    requests: int
+    errors: int
+    status_classes: dict[str, int]
+    duration_ms: DurationMetrics
+
+
+class HttpRouteMetric(HttpMetricAggregate):
+    method: str
+    route: str
+
+
+class ProcessMetrics(BaseModel):
+    started_at: str
+    uptime_seconds: float
+
+
+class ObservabilitySnapshot(BaseModel):
+    process: ProcessMetrics
+    in_flight: int
+    totals: HttpMetricAggregate
+    routes: list[HttpRouteMetric]
 
 
 @router.get("/health")
@@ -58,6 +89,14 @@ def health_ready(request: Request) -> JSONResponse:
 def api_health(request: Request) -> JSONResponse:
     """Authenticated-product alias kept public by the API gateway whitelist."""
     return _readiness_response(request)
+
+
+@router.get("/api/observability", response_model=ObservabilitySnapshot)
+def observability() -> dict:
+    """Session-authenticated process metrics for local operators."""
+    from app.services.observability import http_metrics_snapshot
+
+    return http_metrics_snapshot()
 
 
 @router.get("/api/capabilities")

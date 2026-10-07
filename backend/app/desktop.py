@@ -140,7 +140,10 @@ def _setup_logging() -> None:
             errors="replace",    # 容错: 对齐 __init__.py 的 stderr 重配, 避免中文/emoji 触发 UnicodeEncodeError
         )
         handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s "
+                "request_id=%(request_id)s: %(message)s"
+            )
         )
         logging.getLogger().addHandler(handler)
     except Exception as e:  # noqa: BLE001
@@ -289,9 +292,13 @@ def main() -> int:
     # 必须最先执行: console=False 下 stdout/stderr 可能无效, 不守护会导致
     # 后续 logging.basicConfig 创建的 StreamHandler 写日志时进程崩溃。
     _guard_streams()
+    from app.services.observability import install_log_record_factory
+
+    install_log_record_factory()
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s "
+        "request_id=%(request_id)s: %(message)s",
     )
     # 追加文件日志: console=False 下 stderr 被吞, 必须落盘否则查无对证。
     # 放在 basicConfig 之后 (它先建好 root logger 的格式), 这里只追加 handler。
