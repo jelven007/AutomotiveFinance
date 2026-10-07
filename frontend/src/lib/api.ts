@@ -755,6 +755,41 @@ export interface AuctionBenchmarkPayload {
   items?: AuctionBenchmarkItem[]
 }
 
+export interface AuctionSnapshotRow {
+  symbol: string
+  name?: string | null
+  exchange: 'SH' | 'SZ'
+  auction_price?: number | null
+  indicative_price?: number | null
+  prev_close?: number | null
+  auction_change_pct?: number | null
+  auction_volume?: number | null
+  auction_amount?: number | null
+  bid1?: number | null
+  bid1_volume?: number | null
+  ask1?: number | null
+  ask1_volume?: number | null
+  order_imbalance?: number | null
+  source_time?: string | null
+  matched: boolean
+}
+
+export interface AuctionSnapshotPayload {
+  state: 'ready' | 'not_collected' | 'incomplete'
+  trade_date?: string
+  captured_at?: string
+  provider?: string
+  universe_as_of?: string
+  universe_count?: number
+  excluded_delisted_count?: number
+  quote_count?: number
+  matched_count?: number
+  coverage_ratio?: number
+  available_dates?: string[]
+  filtered_count?: number
+  rows?: AuctionSnapshotRow[]
+}
+
 // ===== Strategy Engine =====
 export interface StrategyParamDef {
   id: string
@@ -3782,6 +3817,16 @@ export const api = {
   /** 盘中异动: enriched 当日信号命中行 (涨停/炸板/翘板/跌停/新高/新低/放量) */
   abnormalIntraday: (limit = 500) =>
     request<AbnormalIntradayPayload>(`/api/abnormal/intraday?limit=${limit}`),
+
+  /** 本地按交易日积累的 09:25 全市场竞价终态快照 */
+  auctionSnapshot: (date?: string, minGapPct = 0.03, limit = 300) => {
+    const params = new URLSearchParams({
+      min_gap_pct: String(minGapPct),
+      limit: String(limit),
+    })
+    if (date) params.set('date', date)
+    return request<AuctionSnapshotPayload>(`/api/abnormal/auction?${params}`)
+  },
 
   // ===== Monitor Rules (监控规则) =====
   monitorRulesList: () =>

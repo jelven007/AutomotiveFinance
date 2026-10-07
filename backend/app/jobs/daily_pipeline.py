@@ -2,6 +2,7 @@
 
 调度:
   09:10 盘前 — 同步个股维表 instruments (全量覆盖)
+  09:25 盘前 — 全市场集合竞价终态快照
   15:35 盘后 — 日K同步 + 增量除权因子 + enriched 计算 + 刷新视图
   (默认 15:35: 盘后固定价 15:30 终止 + 供应商日线定稿缓冲, 见 preferences)
 
@@ -22,7 +23,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
 from app.indicators.pipeline import filter_halt_days, run_pipeline
-from app.market_time import cn_today
+from app.market_time import cn_now, cn_today
 from app.services import index_sync, instrument_sync, kline_sync
 from app.services import preferences as _prefs
 from app.tickflow.capabilities import Cap, CapabilitySet
@@ -1180,6 +1181,49 @@ def _register_review_job(scheduler, repo, hour: int, minute: int) -> None:
     )
 
 
+def _run_auction_snapshot(repo: KlineRepository) -> dict:
+    from app.services.auction_snapshot import capture_auction_snapshot
+
+    result = capture_auction_snapshot(repo.store.data_dir)
+    state = result.get("state")
+    if state not in {"ready", "already_captured", "market_closed"}:
+        logger.warning("09:25 auction snapshot not published: %s", result)
+    return result
+
+
+def _register_auction_jobs(scheduler, repo: KlineRepository) -> None:
+    """Register bounded retries and an in-window startup catch-up."""
+    for second in (8, 25, 45):
+        scheduler.add_job(
+            _run_auction_snapshot,
+            args=[repo],
+            trigger=CronTrigger(
+                day_of_week="mon-fri",
+                hour=9,
+                minute=25,
+                second=second,
+                timezone="Asia/Shanghai",
+            ),
+            id=f"auction_snapshot_{second}",
+            misfire_grace_time=60,
+            replace_existing=True,
+        )
+
+    auction_now = cn_now()
+    if (
+        auction_now.weekday() < 5
+        and (9, 25, 5) <= (auction_now.hour, auction_now.minute, auction_now.second)
+        <= (9, 29, 30)
+    ):
+        scheduler.add_job(
+            _run_auction_snapshot,
+            args=[repo],
+            id="auction_snapshot_catchup",
+            next_run_time=auction_now,
+            replace_existing=True,
+        )
+
+
 def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOScheduler:
     """启动调度器。
 
@@ -1209,6 +1253,9 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
         misfire_grace_time=1800,
         replace_existing=True,
     )
+
+    # 首个成功发布后, 后续重试只读 ready marker 并立即返回。
+    _register_auction_jobs(scheduler, repo)
 
     # 盘后: 日 K + enriched（时间由偏好决定）
     def _pipeline_then_refresh(on_progress=None):
@@ -1303,7 +1350,7 @@ def start_scheduler(repo: KlineRepository, capset: CapabilitySet) -> AsyncIOSche
                     review_sched["hour"], review_sched["minute"])
 
     scheduler.start()
-    logger.info("scheduler started; instruments@%02d:%02d, pipeline@%02d:%02d, depth@%02d:%02d mon-fri",
+    logger.info("scheduler started; instruments@%02d:%02d, auction@09:25, pipeline@%02d:%02d, depth@%02d:%02d mon-fri",
                 inst_sched["hour"], inst_sched["minute"], sched["hour"], sched["minute"],
                 depth_sched["hour"], depth_sched["minute"])
     return scheduler

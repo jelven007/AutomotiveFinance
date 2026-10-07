@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import polars as pl
 
 from app.config import settings
+from app.data_providers.instrument_status import is_delisted_name, normalize_instrument_name
 from app.data_providers.normalizer import normalize_daily
 from app.market_time import cn_now
 from app.plugins.mootdx.client import MootdxClient, MootdxError
@@ -306,8 +307,10 @@ class MootdxProvider:
                         complete = False
                     for item in market_rows:
                         code = str(item.get("code") or "").strip()
-                        name = str(item.get("name") or code).strip()
+                        name = normalize_instrument_name(item.get("name") or code)
                         matches = _is_a_share(code, exchange)
+                        if asset_type == "stock" and is_delisted_name(name):
+                            matches = False
                         if asset_type == "index":
                             matches = (
                                 exchange == "SH" and code.startswith("000")
@@ -653,7 +656,13 @@ class MootdxProvider:
         )
 
     # ---- realtime/depth ----
-    def _quote_rows(self, symbols: list[str], *, include_names: bool) -> list[dict]:
+    def _quote_rows(
+        self,
+        symbols: list[str],
+        *,
+        include_names: bool,
+        include_depth: bool = False,
+    ) -> list[dict]:
         supported = [
             symbol for symbol in symbols if symbol.endswith((".SH", ".SZ"))
         ]
@@ -690,25 +699,32 @@ class MootdxProvider:
                             else None
                         )
                         volume = _to_float(row.get("vol"))
-                        result.append(
-                            {
-                                "symbol": symbol,
-                                "name": names.get(symbol),
-                                "last_price": price,
-                                "prev_close": previous,
-                                "open": _to_float(row.get("open")),
-                                "high": _to_float(row.get("high")),
-                                "low": _to_float(row.get("low")),
-                                "volume": volume,
-                                "amount": _to_float(row.get("amount")),
-                                "change_pct": change_pct,
-                                "change_amount": change,
-                                "amplitude": None,
-                                "turnover_rate": None,
-                                "timestamp": fetched_ms,
-                                "session": None,
-                            }
-                        )
+                        record = {
+                            "symbol": symbol,
+                            "name": names.get(symbol),
+                            "last_price": price,
+                            "prev_close": previous,
+                            "open": _to_float(row.get("open")),
+                            "high": _to_float(row.get("high")),
+                            "low": _to_float(row.get("low")),
+                            "volume": volume,
+                            "amount": _to_float(row.get("amount")),
+                            "change_pct": change_pct,
+                            "change_amount": change,
+                            "amplitude": None,
+                            "turnover_rate": None,
+                            "timestamp": fetched_ms,
+                            "session": None,
+                        }
+                        if include_depth:
+                            record.update({
+                                "bid1": _to_float(row.get("bid1")),
+                                "bid1_volume": _to_float(row.get("bid_vol1")),
+                                "ask1": _to_float(row.get("ask1")),
+                                "ask1_volume": _to_float(row.get("ask_vol1")),
+                                "source_time": str(row.get("servertime") or "") or None,
+                            })
+                        result.append(record)
         except MootdxError as exc:
             logger.warning("mootdx 实时行情连接失败: %s", exc)
         return result
@@ -723,6 +739,10 @@ class MootdxProvider:
     def get_realtime_indices(self, symbols: list[str]) -> list[dict] | None:
         rows = self._quote_rows(symbols, include_names=False)
         return rows or None
+
+    def get_auction_snapshot(self, symbols: list[str]) -> list[dict]:
+        """Return one explicit-symbol snapshot with auction/depth evidence."""
+        return self._quote_rows(symbols, include_names=False, include_depth=True)
 
     def get_depth_batch(self, symbols: list[str]) -> dict[str, dict]:
         supported = [

@@ -68,6 +68,7 @@ def test_instruments_filters_non_a_share_products_and_supports_bj_when_available
         0: [
             {"code": "000001", "name": "平安银行"},
             {"code": "300750", "name": "宁德时代"},
+            {"code": "301139", "name": "元道退\x00\x00"},
             {"code": "159001", "name": "货币ETF"},
             {"code": "200001", "name": "深B"},
         ],
@@ -92,6 +93,33 @@ def test_instruments_filters_non_a_share_products_and_supports_bj_when_available
     assert fake.stock_calls == [0, 1, 2]
     assert rows[0]["ext"]["tick_size"] == 0.01
     assert rows[0]["ext"]["float_shares"] is None
+
+
+def test_auction_snapshot_preserves_server_time_and_top_of_book():
+    fake = _FakeClient()
+    fake.quote_rows = [{
+        "market": 1,
+        "code": "600519",
+        "price": 1501.0,
+        "last_close": 1470.0,
+        "open": 1500.0,
+        "vol": 12_345,
+        "amount": 1.86e9,
+        "servertime": "09:25:08.125",
+        "bid1": 1499.9,
+        "bid_vol1": 320,
+        "ask1": 1500.0,
+        "ask_vol1": 180,
+    }]
+
+    rows = _provider(fake).get_auction_snapshot(["600519.SH"])
+
+    assert len(rows) == 1
+    assert rows[0]["source_time"] == "09:25:08.125"
+    assert rows[0]["bid1"] == pytest.approx(1499.9)
+    assert rows[0]["bid1_volume"] == pytest.approx(320)
+    assert rows[0]["ask1_volume"] == pytest.approx(180)
+    assert fake.quote_calls == [["600519.SH"]]
 
 
 def test_daily_uses_raw_prices_filters_window_and_preserves_tdx_lots():

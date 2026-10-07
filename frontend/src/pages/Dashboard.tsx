@@ -374,7 +374,7 @@ function FetchDataCard({
             ⓘ 获取数据后即可进行策略定制、回测验证、选股扫描等本地分析功能。
           </p>
           <p className="mt-1 text-[11px] text-muted leading-relaxed">
-            💡 配置 fuyao(同花顺 REST) Key 可解锁财务四表 / 龙虎榜 / 盘前风向标 / 竞价异动:
+            💡 配置 fuyao(同花顺 REST) Key 可解锁财务四表 / 龙虎榜 / 盘前风向标:
             <Link to="/settings?tab=data-sources" className="text-accent hover:text-accent/80 transition-colors">前往设置 →</Link>
           </p>
 
@@ -461,7 +461,7 @@ function WelcomeFetchModal({
         <div className="mx-auto mt-4 max-w-md rounded-btn bg-elevated/60 px-4 py-3 text-left">
           <div className="text-[11px] font-medium text-secondary">获取完成后的推荐步骤</div>
           <ol className="mt-1.5 space-y-1 text-[11px] text-muted leading-relaxed">
-            <li>1. <span className="text-secondary">配置 fuyao(同花顺 REST) Key</span> — 解锁财务四表 / 龙虎榜 / 盘前风向标 / 竞价异动</li>
+            <li>1. <span className="text-secondary">配置 fuyao(同花顺 REST) Key</span> — 解锁财务四表 / 龙虎榜 / 盘前风向标</li>
             <li>2. <span className="text-secondary">分钟数据落盘(可选)</span> — 分钟策略回测与板块分时走势需要</li>
             <li>3. <span className="text-secondary">开始研究</span> — 自选加标的 → 策略扫描 → 回测验证</li>
           </ol>

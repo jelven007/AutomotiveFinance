@@ -5,11 +5,31 @@
 """
 from __future__ import annotations
 
+from datetime import date
+from typing import Annotated
+
 from fastapi import APIRouter, Query, Request
 
+from app.services import auction_snapshot
 from app.services.abnormal_moves import build_intraday, build_overview
 
 router = APIRouter(prefix="/api/abnormal", tags=["abnormal"])
+
+
+@router.get("/auction")
+def abnormal_auction(
+    request: Request,
+    target_date: Annotated[date | None, Query(alias="date")] = None,
+    min_gap_pct: Annotated[float | None, Query(ge=-0.5, le=0.5)] = 0.03,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 300,
+):
+    """Read a locally captured 09:25 full-market auction snapshot."""
+    return auction_snapshot.get_auction_snapshot(
+        request.app.state.repo.store.data_dir,
+        target_date,
+        min_gap_pct=min_gap_pct,
+        limit=limit,
+    )
 
 
 @router.get("/intraday")

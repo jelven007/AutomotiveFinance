@@ -12,6 +12,7 @@ from pathlib import Path
 
 import polars as pl
 
+from app.data_providers.instrument_status import is_delisted_name, normalize_instrument_name
 from app.market_time import cn_today
 from app.services.fs_utils import atomic_write_parquet
 from app.tickflow.client import get_client
@@ -25,9 +26,12 @@ def _flatten_instruments(items: list[dict]) -> list[dict]:
     """把 SDK 返回的 Instrument 列表 flatten 成扁平行。"""
     rows = []
     for item in items:
+        name = normalize_instrument_name(item.get("name"))
+        if is_delisted_name(name):
+            continue
         row = {
             "symbol": item.get("symbol"),
-            "name": item.get("name"),
+            "name": name,
             "code": item.get("code"),
             "exchange": item.get("exchange"),
             "region": item.get("region"),
