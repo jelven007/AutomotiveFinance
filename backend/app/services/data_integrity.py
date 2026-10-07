@@ -10,7 +10,7 @@
 - d < 今天 且 时刻 ≥ d 15:00 → 尾盘定版 (close_final) → 完整
 - batch 权威行中仅夹杂少量零成交实时行 → 停牌残留 → 忽略
 - d == 今天         → 实时更新中, 属正常, 不校验
-- 分区缺失的候选日  → 缺口 (fuyao 日历可用按真实交易日, 否则工作日近似;
+- 分区缺失的候选日  → 缺口 (当前日线源日历可用时按真实交易日, 否则工作日近似;
   节假日误报对修复只是空拉取, 但对 realtime_gate 是 409 死锁 —
   休市日永远无数据, 门禁循环放行不了, 故日历优先, 见 §4.24)
 
@@ -171,7 +171,7 @@ def _partition_is_snapshot(day: date, part_dir: Path, quote_ts_max_ms: int | Non
 def _candidate_days(today: date, lookback_days: int) -> list[date]:
     """最近 lookback_days 自然日内、严格早于今天的交易日。
 
-    fuyao 交易日历可用时按真实日历过滤 (休市日不进候选, 消除节假日误报 —
+    当前日线源交易日历可用时按真实日历过滤 (休市日不进候选, 消除节假日误报 —
     2026 中秋 09-25 休市日曾被当缺失日, realtime_gate 409 死锁);
     从未取到日历时回退工作日近似 (历史行为)。
     """
@@ -188,7 +188,7 @@ def _candidate_days(today: date, lookback_days: int) -> list[date]:
 
 
 # ---------------------------------------------------------------------------
-# 交易日历 (fuyao) — 「工作日近似」在节假日误报 missing; 修复任务对休市日
+# 交易日历 — 「工作日近似」在节假日误报 missing; 修复任务对休市日
 # 永远拉不到数据, realtime_gate 因此循环 409 (2026-09-25 中秋实证)。
 # 取数失败时沿用上一次成功结果 (stale-while-error): 节假日表近乎不变,
 # 陈旧日历仍远好于退回工作日近似 (长假期内误报会让门禁反复死锁)。
@@ -198,11 +198,19 @@ _CAL_LOCK = threading.Lock()
 _CAL: tuple[float, set[date] | None] = (0.0, None)  # (取数时刻, 交易日集合)
 
 
-def _trading_calendar() -> set[date] | None:
-    """A 股交易日集合 (fuyao 近一年); 从未取到过 → None (调用方回退周几近似)。
+def reset_calendar_cache() -> None:
+    """Clear the provider-owned trading calendar after a source change."""
+    global _CAL
+    with _CAL_LOCK:
+        _CAL = (0.0, None)
 
-    与 trading_day.is_trading_day 探测链第 1 环同源; 这里需要**任意历史日**
-    的判定, 故直接消费整年集合。线程安全 (gate / boot / 修复管道共用)。
+
+def _trading_calendar() -> set[date] | None:
+    """A 股近一年交易日集合; 从未取到过 → None (调用方回退周几近似)。
+
+    跟随当前日线 Provider, 不跨源。优先消费 Provider 的 trading_days();
+    没有独立日历时读取该源上证指数日线日期。线程安全 (gate / boot / 修复
+    管道共用)。
     """
     now = time.monotonic()
     global _CAL
@@ -213,11 +221,26 @@ def _trading_calendar() -> set[date] | None:
     fetched: set[date] | None = None
     try:
         from app.data_providers import custom as custom_sources
+        from app.services import preferences
 
-        if custom_sources.is_custom_provider("fuyao"):
-            raw = custom_sources.get_provider("fuyao").trading_days()
-            if raw:
-                fetched = set(raw)
+        provider_name = preferences.get_daily_data_provider()
+        if custom_sources.is_custom_provider(provider_name):
+            provider = custom_sources.get_provider(provider_name)
+            trading_days = getattr(provider, "trading_days", None)
+            if callable(trading_days):
+                raw = trading_days()
+                if raw:
+                    fetched = set(raw)
+            elif custom_sources.provider_has_dataset(provider_name, "daily"):
+                now_cn = datetime.now(CN_TZ)
+                frame = provider.get_daily(
+                    ["000001.SH"],
+                    now_cn - timedelta(days=370),
+                    now_cn,
+                    asset_type="index",
+                )
+                if frame is not None and not frame.is_empty() and "date" in frame.columns:
+                    fetched = set(frame["date"].drop_nulls().to_list())
     except Exception:  # noqa: BLE001 — 日历不可用不上抛, 回退 stale/近似
         fetched = None
     with _CAL_LOCK:

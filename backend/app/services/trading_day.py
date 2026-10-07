@@ -4,10 +4,11 @@
 「工作日但休市」的节假日从轮询窗口里剔除; 返回 None (未知) 时调用方
 维持现状行为 (周几近似 + 快照新鲜度判据兜底), 不引入新依赖。
 
-探测链 (按确定性排序, 先到先得):
-  1. fuyao 交易日历 (已配置 fuyao 时): GET /api/a-share/calendar/trading-days,
-     今天在近一年交易日列表内 ⇔ 交易日。权威日历, 无时段依赖, 无开盘缓冲问题。
-  2. tickflow 实时行情时间戳: 拉一篮流动性票快照 (单请求), max(timestamp)
+探测链 (按当前实时数据源路由, 不跨源):
+  1. 自定义源优先使用 trading_days(); 未提供时用该源指数日线的最新日期。
+     今天有指数日线 ⇔ 交易日；开盘缓冲窗内若仍停在昨日则返回未知。
+  2. 明确选择 tickflow 时才用实时行情时间戳: 拉一篮流动性票快照,
+     max(timestamp)
      日期 == 今天 ⇔ 交易日。非交易日全市场戳停在上一交易日 (2026-08-29 周六
      实测 5551/5551, 含停牌股 — 戳是快照定版时刻, 非最后成交时刻);
      交易日集合竞价阶段 (9:15-9:30) 戳是否已翻新未实测 → 开盘缓冲窗内
@@ -27,7 +28,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 
 from app.market_time import CN_TZ, cn_now
 
@@ -65,15 +66,40 @@ def reset_cache() -> None:
 
 
 def _probe_fuyao(now: datetime) -> bool | None:
-    """fuyao 交易日历: 今天在列表内 ⇔ 交易日。未配置 fuyao / 失败 → None。"""
+    """Probe the selected custom source without crossing provider boundaries.
+
+    The historical name is retained for compatibility with existing callers
+    and tests; it now supports any selected custom provider.
+    """
     try:
         from app.data_providers import custom as custom_sources
+        from app.services import preferences
 
-        if not custom_sources.is_custom_provider("fuyao"):
+        provider_name = preferences.get_realtime_data_provider()
+        if provider_name == "tickflow" or not custom_sources.is_custom_provider(provider_name):
             return None
-        provider = custom_sources.get_provider("fuyao")
-        days = provider.trading_days()
-        return now.date() in days if days else None
+        provider = custom_sources.get_provider(provider_name)
+        trading_days = getattr(provider, "trading_days", None)
+        if callable(trading_days):
+            days = trading_days()
+            return now.date() in days if days else None
+
+        if not custom_sources.provider_has_dataset(provider_name, "daily"):
+            return None
+        frame = provider.get_daily(
+            ["000001.SH"],
+            now - timedelta(days=10),
+            now,
+            asset_type="index",
+        )
+        if frame is None or frame.is_empty() or "date" not in frame.columns:
+            return None
+        latest = frame["date"].max()
+        if latest == now.date():
+            return True
+        if now.time() < _STALE_BUFFER_UNTIL:
+            return None
+        return False
     except Exception:  # noqa: BLE001 — 探针失败按未知处理, 不上抛
         return None
 
@@ -85,8 +111,11 @@ def _probe_tickflow(now: datetime) -> bool | None:
     无实时权限 / 网络失败 / 无有效戳 → None。
     """
     try:
+        from app.services import preferences
         from app.tickflow.client import get_client
 
+        if preferences.get_realtime_data_provider() != "tickflow":
+            return None
         rows = get_client().quotes.get(symbols=list(_BASKET)) or []
         stamps = [r.get("timestamp") for r in rows if isinstance(r, dict)]
         valid = [int(t) for t in stamps if isinstance(t, (int, float)) and t]

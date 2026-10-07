@@ -57,6 +57,23 @@ def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
     if pool_id == "watchlist":
         return _load_watchlist()
 
+    # Whole-market jobs use the selected catalog, including when a legacy
+    # TickFlow pool cache exists. Provider owns its catalog cache and failures.
+    from app.services import preferences
+
+    provider_name = preferences.get_daily_data_provider()
+    if pool_id in {"CN_Equity_A", "CN_Index"} and provider_name != "tickflow":
+        from app.data_providers import custom
+
+        try:
+            provider = custom.get_provider(provider_name)
+            asset_type = "stock" if pool_id == "CN_Equity_A" else "index"
+            rows = provider.get_instruments(asset_type)
+            return sorted({row["symbol"] for row in rows if row.get("symbol")})
+        except Exception as exc:
+            logger.warning("selected catalog %s/%s unavailable: %s", provider_name, pool_id, exc)
+            return []
+
     cache = _pool_cache_path(pool_id)
     if cache.exists() and not refresh:
         df = pl.read_parquet(cache)

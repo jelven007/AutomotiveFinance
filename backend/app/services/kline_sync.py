@@ -1023,6 +1023,28 @@ def sync_minute_batch(
         不进入全局 out → 内存峰值从「全量」降到「单段」。适用于 sync_and_persist_minute。
         不传时 (如 get_minute_batch 的实时补拉) 保持原契约: 累积进 out 末尾一次性返回。
     """
+    # Custom sources can return millions of rows for a whole-market window.
+    # Flush bounded symbol batches through the existing partition writer.
+    if (
+        on_segment is not None
+        and len(symbols) > 100
+        and preferences.get_minute_data_provider() != "tickflow"
+    ):
+        custom_batch_size = max(1, min(batch_size or 100, 100))
+        batches = chunked(symbols, custom_batch_size)
+        for index, batch in enumerate(batches, start=1):
+            df, fallback = _try_custom_minute(
+                batch, start_time=start_time, end_time=end_time,
+                asset_type=asset_type, freq="1m",
+            )
+            if fallback:
+                raise RuntimeError("分钟同步期间数据源已变更, 请重新启动任务")
+            if df is not None and not df.is_empty():
+                on_segment(df)
+            if on_chunk_done:
+                on_chunk_done(index, len(batches), "custom")
+        return pl.DataFrame()
+
     df, fallback = _try_custom_minute(
         symbols, start_time=start_time, end_time=end_time,
         asset_type=asset_type, freq="1m", on_chunk_done=on_chunk_done,
@@ -1694,10 +1716,15 @@ def sync_and_persist_minute(
     written_box = [0]  # list 闭包, 绕过 Python 闭包外层赋值
 
     def _persist(seg_df: pl.DataFrame) -> None:
+        upserted = seg_df.select("symbol", "datetime").unique().height
         # 单股自动补齐可能与另一个补齐请求同时写同一日期分区。Windows 不允许
         # 替换仍被另一写入占用的临时文件,因此读-改-写必须复用仓库写锁。
         with repo._write_lock:
-            written_box[0] += _write_minute_partition(seg_df, minute_dir)
+            _write_minute_partition(seg_df, minute_dir)
+        # _write_minute_partition returns final partition sizes. Summing that
+        # across whole-market chunks grows quadratically and grossly overstates
+        # the job result; report the unique rows this chunk actually upserted.
+        written_box[0] += upserted
 
     segment_days = preferences.get_minute_sync_segment_days()
     sync_minute_batch(

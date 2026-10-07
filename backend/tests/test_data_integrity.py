@@ -672,11 +672,14 @@ _CAL_FAKE_2026_09 = {
 
 
 @pytest.fixture(autouse=True)
-def _no_trading_calendar_by_default():
+def _no_trading_calendar_by_default(monkeypatch):
     """默认把模块级日历缓存置为「过期」: 既有用例维持周几近似语义 (CI 无
     fuyao → 探测即回退, 零外部依赖); 日历相关用例自行写入 fake 日历。
     (fetched_at=0.0 表示 TTL 已过, 不用 time.monotonic — 本文件顶部
     `from datetime import time` 会遮蔽标准库 time。)"""
+    monkeypatch.setattr(
+        "app.services.preferences.get_daily_data_provider", lambda: "tickflow"
+    )
     saved = di._CAL
     di._CAL = (0.0, None)
     yield
@@ -716,6 +719,31 @@ def test_candidate_days_excludes_market_holiday(monkeypatch):
     assert date(2026, 9, 25) not in got
     assert date(2026, 9, 24) in got
     assert date(2026, 9, 28) not in got
+
+
+def test_calendar_follows_selected_daily_provider_index_bars(monkeypatch):
+    days = {date(2026, 9, 29), date(2026, 9, 30)}
+    provider = SimpleNamespace(
+        get_daily=lambda *args, **kwargs: pl.DataFrame(
+            {"symbol": ["000001.SH"] * len(days), "date": sorted(days)}
+        )
+    )
+    fake = SimpleNamespace(
+        is_custom_provider=lambda name: name == "mootdx",
+        get_provider=lambda name: provider,
+        provider_has_dataset=lambda name, dataset: dataset == "daily",
+    )
+    monkeypatch.setattr(app.data_providers, "custom", fake)
+    monkeypatch.setattr(
+        "app.services.preferences.get_daily_data_provider", lambda: "mootdx"
+    )
+    di._CAL = (0.0, None)
+
+    assert _trading_calendar() == days
+    assert _candidate_days(date(2026, 10, 7), 8) == [
+        date(2026, 9, 29),
+        date(2026, 9, 30),
+    ]
 
 
 def test_candidate_days_falls_back_to_weekday_without_calendar(monkeypatch):

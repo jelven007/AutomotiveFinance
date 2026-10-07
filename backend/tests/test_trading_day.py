@@ -8,8 +8,9 @@ tickflow 戳的 OR 语义与开盘缓冲窗、失败/无权限 → None、TTL �
 
 from __future__ import annotations
 
-from datetime import date, datetime, time as dt_time, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 
+import polars as pl
 import pytest
 
 from app.services import trading_day
@@ -19,7 +20,10 @@ CN = timezone(timedelta(hours=8))
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
+def _clean_cache(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider", lambda: "tickflow"
+    )
     reset_cache()
     yield
     reset_cache()
@@ -135,6 +139,58 @@ def test_tickflow_error_returns_none(monkeypatch):
     assert trading_day._probe_tickflow(monday) is None
 
 
+def test_custom_source_uses_its_daily_calendar_without_tickflow(monkeypatch):
+    monday = datetime(2026, 10, 5, 10, 41, tzinfo=CN)
+
+    class _Provider:
+        def get_daily(self, symbols, start_time, end_time, asset_type):
+            assert symbols == ["000001.SH"]
+            assert asset_type == "index"
+            return pl.DataFrame({"symbol": ["000001.SH"], "date": [date(2026, 9, 30)]})
+
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider", lambda: "mootdx"
+    )
+    monkeypatch.setattr(
+        "app.data_providers.custom.is_custom_provider", lambda name: name == "mootdx"
+    )
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset", lambda name, dataset: True
+    )
+    monkeypatch.setattr(
+        "app.data_providers.custom.get_provider", lambda name: _Provider()
+    )
+    monkeypatch.setattr(
+        "app.tickflow.client.get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("must not call TickFlow")),
+    )
+
+    assert is_trading_day(monday) is False
+
+
+def test_custom_source_current_daily_bar_is_trading_day(monkeypatch):
+    monday = datetime(2026, 9, 7, 10, 41, tzinfo=CN)
+    provider = type(
+        "Provider",
+        (),
+        {
+            "get_daily": lambda self, *args, **kwargs: pl.DataFrame(
+                {"symbol": ["000001.SH"], "date": [date(2026, 9, 7)]}
+            )
+        },
+    )()
+    monkeypatch.setattr(
+        "app.services.preferences.get_realtime_data_provider", lambda: "mootdx"
+    )
+    monkeypatch.setattr("app.data_providers.custom.is_custom_provider", lambda name: True)
+    monkeypatch.setattr(
+        "app.data_providers.custom.provider_has_dataset", lambda name, dataset: True
+    )
+    monkeypatch.setattr("app.data_providers.custom.get_provider", lambda name: provider)
+
+    assert is_trading_day(monday) is True
+
+
 # ---- TTL 缓存 ----
 
 def test_verdict_cached_within_ttl(monkeypatch):
@@ -212,7 +268,6 @@ def _minute_service(monkeypatch):
 def test_minute_refresh_gate_returns_holiday(monkeypatch):
     """周几+时段门控放行 (周一盘中) 但探针判休市 → holiday。"""
     svc = _minute_service(monkeypatch)
-    monday_1030 = datetime(2026, 9, 7, 10, 30, tzinfo=CN)
     monkeypatch.setattr(
         "app.services.minute_refresh._in_continuous_session", lambda now=None: True
     )
@@ -232,8 +287,8 @@ def test_minute_refresh_gate_passes_when_trading(monkeypatch):
 # ---- fuyao 日历解析 ----
 
 def test_fuyao_provider_trading_days_conversion(monkeypatch):
-    from app.plugins.fuyao.provider import FuyaoProvider
     from app.plugins.fuyao import provider as fp
+    from app.plugins.fuyao.provider import FuyaoProvider
 
     class _CalClient:
         def trading_days(self):

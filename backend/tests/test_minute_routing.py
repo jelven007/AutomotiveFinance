@@ -537,8 +537,10 @@ def test_sync_and_persist_minute_custom_persists(monkeypatch, tmp_path):
     monkeypatch.setattr(kline_sync, "resolve_limit", lambda *a, **kw: MagicMock(batch=100, rpm=30))
     monkeypatch.setattr(kline_sync.preferences, "get_minute_sync_segment_days", lambda: 20)
 
-    # _write_minute_partition spy: 记录调用, 返回行数
-    write_spy = MagicMock(return_value=expected_df.height)
+    # Writer returns the final partition size, which may include many rows
+    # written by earlier whole-market chunks. The job result must count only
+    # this call's unique upserts.
+    write_spy = MagicMock(return_value=999_999)
     monkeypatch.setattr(kline_sync, "_write_minute_partition", write_spy)
 
     # get_client spy: 自定义源成功时不应走 TickFlow

@@ -786,6 +786,10 @@ def delete_data_source(name: str, request: Request) -> dict:
         updates["adj_factor_provider"] = "tickflow"
     if updates:
         preferences.save(updates)
+        from app.services import data_integrity, trading_day
+
+        data_integrity.reset_calendar_cache()
+        trading_day.reset_cache()
     # 删除源可能触发偏好回退 tickflow, 同步刷新能力快照
     request.app.state.capabilities = detect_capabilities()
     return list_data_sources()
@@ -823,6 +827,10 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
     updates = req.model_dump(exclude_none=True)
     if updates:
         preferences.save(updates)
+        from app.services import data_integrity, trading_day
+
+        data_integrity.reset_calendar_cache()
+        trading_day.reset_cache()
     # 刷新能力快照: 当前 provider 变化会改变自定义源能力增广结果 (读缓存, 无网络请求)
     request.app.state.capabilities = detect_capabilities()
     return {

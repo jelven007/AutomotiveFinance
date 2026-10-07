@@ -122,11 +122,30 @@ def _safe_aggregate(repo, view: str) -> dict | None:
     }
 
 
-def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
-    """日K轻量统计 — 零数据扫描。
+def _parquet_row_symbol_stats(directory: Path) -> tuple[int, int]:
+    """Return exact row/symbol counts without loading full Parquet payloads."""
+    import polars as pl
 
-    从分区目录名获取日期范围和交易日数，不读任何 parquet。
-    标的数从 instruments 小表获取（~5000行，毫秒级）。
+    files = [str(path) for path in directory.rglob("*.parquet")]
+    if not files:
+        return 0, 0
+    stats = (
+        pl.scan_parquet(files, hive_partitioning=False)
+        .select(
+            pl.len().alias("rows"),
+            pl.col("symbol").n_unique().alias("symbols"),
+        )
+        .collect()
+        .row(0)
+    )
+    return int(stats[0]), int(stats[1])
+
+
+def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
+    """日K轻量统计。
+
+    日期范围从分区目录名获取；行数由 Parquet 元数据统计，标的数只扫描
+    symbol 列。结果有 TTL 缓存，避免前端轮询重复计算。
     """
     daily_dir = repo.store.data_dir / "kline_daily"
     if not daily_dir.exists():
@@ -139,10 +158,14 @@ def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
         return None
     dates.sort()
 
-    symbols = _count_instruments_symbols(repo)
+    try:
+        rows, symbols = _parquet_row_symbol_stats(daily_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("aggregate daily parquet stats failed: %s", e)
+        rows, symbols = 0, _count_instruments_symbols(repo)
 
     return {
-        "rows": 0,
+        "rows": rows,
         "earliest_date": dates[0],
         "latest_date": dates[-1],
         "symbols_covered": symbols,
@@ -151,11 +174,10 @@ def _safe_aggregate_daily(repo, view: str = "kline_daily") -> dict | None:
 
 
 def _safe_aggregate_enriched(repo) -> dict | None:
-    """Enriched 轻量统计 — 零数据扫描。
+    """Enriched 轻量统计。
 
     字段数从 DESCRIBE 读 schema（不碰数据），毫秒级。
-    日期范围从分区目录名获取（同 minute 策略），不读任何 parquet。
-    标的数从 instruments 小表取。
+    日期范围从分区目录名获取；行数和实际覆盖标的由 Parquet 统计。
     """
     # 字段数：读 schema，不碰数据
     fields = 0
@@ -177,10 +199,14 @@ def _safe_aggregate_enriched(repo) -> dict | None:
         return None
     dates.sort()
 
-    symbols = _count_instruments_symbols(repo)
+    try:
+        rows, symbols = _parquet_row_symbol_stats(enriched_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("aggregate enriched parquet stats failed: %s", e)
+        rows, symbols = 0, _count_instruments_symbols(repo)
 
     return {
-        "rows": 0,
+        "rows": rows,
         "fields": fields,
         "earliest_date": dates[0],
         "latest_date": dates[-1],
@@ -378,10 +404,10 @@ def _safe_aggregate_adj_factor(repo) -> dict | None:
 
 
 def _safe_aggregate_minute(repo) -> dict | None:
-    """kline_minute 统计 — 从分区目录名获取交易日数，跳过全表扫描。
+    """kline_minute 统计。
 
-    分钟 K 按 date=YYYY-MM-DD 分区存储，直接数目录即可，
-    无需 count(*) / count(DISTINCT ...) 等昂贵查询。
+    分钟 K 按 date=YYYY-MM-DD 分区存储；日期直接取目录名，行数由 Parquet
+    元数据统计，标的数只扫描 symbol 列。结果使用大表 TTL 缓存。
     """
     minute_dir = repo.store.data_dir / "kline_minute"
     if not minute_dir.exists():
@@ -397,11 +423,16 @@ def _safe_aggregate_minute(repo) -> dict | None:
         return None
 
     dates.sort()
+    try:
+        rows, symbols = _parquet_row_symbol_stats(minute_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("aggregate minute parquet stats failed: %s", e)
+        rows, symbols = 0, 0
     return {
-        "rows": 0,  # 不再查询行数
+        "rows": rows,
         "earliest_date": dates[0],
         "latest_date": dates[-1],
-        "symbols_covered": 0,  # 不再查询标的数
+        "symbols_covered": symbols,
         "trading_days": len(dates),
     }
 
