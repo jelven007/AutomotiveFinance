@@ -216,8 +216,12 @@ class JobStore:
             except Exception:
                 end = utc_now_iso()
             # mtime 早于 started_at(时钟回拨等)时夹住, 避免 duration 为负
-            if j.get("started_at") and end < j["started_at"]:
-                end = j["started_at"]
+            if j.get("started_at"):
+                try:
+                    if _parse_utc(end) < _parse_utc(j["started_at"]):
+                        end = j["started_at"]
+                except (TypeError, ValueError):
+                    end = j["started_at"]
             j = transition_task_record(
                 j,
                 "interrupted",
