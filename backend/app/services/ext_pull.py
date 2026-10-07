@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import threading
-from datetime import UTC, date, datetime, timezone
-from functools import reduce
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +18,8 @@ from app.services.ext_data import (
 )
 
 logger = logging.getLogger(__name__)
+
+_MARKET_HOURS_PRESET_IDS = frozenset({"ext_gn_ths", "ext_hy_ths"})
 
 
 def outbound_headers(user_headers: dict[str, str] | None = None) -> dict[str, str]:
@@ -61,6 +60,39 @@ def _in_time_window(start: str | None, end: str | None) -> bool:
         return start <= now < end
     # 跨午夜: 如 22:00-02:00
     return now >= start or now < end
+
+
+def _scheduled_pull_skip_reason(
+    config_id: str,
+    pull: PullConfig,
+    *,
+    is_startup_run: bool,
+) -> str | None:
+    """返回本轮定时拉取的跳过原因; None 表示允许执行。
+
+    内置概念/行业预设在服务启动后的首轮无条件执行, 确保休市或盘后重启也能
+    立即得到一份最新快照。后续轮次仅在配置时间窗口内且交易日探针明确返回
+    True 时执行; 未知状态按休市处理, 避免节假日持续请求上游。
+
+    其他扩展源保持原有语义, 只受用户配置的时间窗口约束。
+    """
+    is_market_hours_preset = config_id in _MARKET_HOURS_PRESET_IDS
+    if is_market_hours_preset and is_startup_run:
+        return None
+
+    if not _in_time_window(pull.time_window_start, pull.time_window_end):
+        return "不在拉取时间窗口内"
+
+    if is_market_hours_preset:
+        from app.services import trading_day
+
+        verdict = trading_day.is_trading_day()
+        if verdict is False:
+            return "非交易日"
+        if verdict is None:
+            return "交易日状态未知"
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -544,10 +576,12 @@ class PullScheduler:
     async def _run_loop(self, config: ExtConfig) -> None:
         """单个配置的定时拉取循环。
 
-        策略: 启用后立即执行一次, 之后按 interval 循环。
+        策略: 内置概念/行业预设启用后立即执行一次, 后续仅在交易日配置窗口内
+        按 interval 循环。其他扩展源沿用配置窗口语义。
         每次循环重读最新配置 (fresh), interval 取自 fresh.pull.schedule_minutes,
         这样用户中途修改间隔也能立即生效 (无需重启)。
         """
+        is_startup_run = True
         try:
             while self._running:
                 # 每轮重读最新配置 — 用户可能修改了 url / interval / enabled
@@ -557,13 +591,18 @@ class PullScheduler:
                     break
                 pull = fresh.pull
 
-                # 时间窗口检查: 不在窗口内则跳过本次拉取
-                if not _in_time_window(pull.time_window_start, pull.time_window_end):
-                    fresh.pull.last_run = datetime.now(timezone.utc).isoformat()
+                skip_reason = _scheduled_pull_skip_reason(
+                    config.id,
+                    pull,
+                    is_startup_run=is_startup_run,
+                )
+                if skip_reason:
+                    fresh.pull.last_run = datetime.now(UTC).isoformat()
                     fresh.pull.last_status = "skipped"
-                    fresh.pull.last_message = "不在拉取时间窗口内"
+                    fresh.pull.last_message = skip_reason
                     store.upsert(fresh, keep_strategy_cache=True)
-                    logger.info("PullScheduler: %s skipped (outside time window)", config.id)
+                    logger.info("PullScheduler: %s skipped (%s)", config.id, skip_reason)
+                    is_startup_run = False
                     interval = max(pull.schedule_minutes * 60, 60)
                     await asyncio.sleep(interval)
                     continue
@@ -575,7 +614,7 @@ class PullScheduler:
                     n, d = await fetch_and_ingest(
                         fresh, self._data_dir, keep_strategy_cache=True
                     )
-                    fresh.pull.last_run = datetime.now(timezone.utc).isoformat()
+                    fresh.pull.last_run = datetime.now(UTC).isoformat()
                     fresh.pull.last_status = "success"
                     fresh.pull.last_message = f"{n} rows @ {d}"
                     fresh.pull.last_rows = n
@@ -584,12 +623,13 @@ class PullScheduler:
                 except Exception as e:
                     fresh2 = store.get(config.id)
                     if fresh2 and fresh2.pull:
-                        fresh2.pull.last_run = datetime.now(timezone.utc).isoformat()
+                        fresh2.pull.last_run = datetime.now(UTC).isoformat()
                         fresh2.pull.last_status = "error"
                         fresh2.pull.last_message = str(e)[:200]
                         store.upsert(fresh2, keep_strategy_cache=True)
                     logger.warning("PullScheduler: %s error: %s", config.id, e)
 
+                is_startup_run = False
                 # 间隔取自最新配置 (每次重新读取, 修复改间隔不生效)
                 interval = max(pull.schedule_minutes * 60, 60)  # 至少 60s
                 # 预告下次运行时间, 供前端展示

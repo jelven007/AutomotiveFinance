@@ -12,7 +12,7 @@ import contextlib
 import pytest
 
 from app.services import ext_pull
-from app.services.ext_data import ExtConfig, PullConfig
+from app.services.ext_data import ExtConfig, ExtConfigStore, PullConfig
 from app.services.ext_pull import PullScheduler
 
 
@@ -82,3 +82,43 @@ def test_refresh_removes_disabled_configs(scheduler, tmp_path) -> None:
     s.refresh(tmp_path)
     _drain(loop)
     assert set(s._tasks) == {"a"}
+
+
+async def test_run_loop_only_treats_first_iteration_as_startup(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """首轮绕过门控后, 下一轮必须恢复交易日和时间窗口检查。"""
+    config = _cfg("ext_gn_ths")
+    ExtConfigStore(tmp_path).upsert(config)
+
+    scheduler = PullScheduler()
+    scheduler._running = True
+    scheduler._data_dir = tmp_path
+    startup_flags: list[bool] = []
+    fetch_count = 0
+    sleep_count = 0
+
+    def fake_skip_reason(config_id, pull, *, is_startup_run):
+        startup_flags.append(is_startup_run)
+        return None
+
+    async def fake_fetch(*args, **kwargs):
+        nonlocal fetch_count
+        fetch_count += 1
+        return 1, "2026-03-02"
+
+    async def fake_sleep(delay):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count == 2:
+            scheduler._running = False
+
+    monkeypatch.setattr(ext_pull, "_scheduled_pull_skip_reason", fake_skip_reason)
+    monkeypatch.setattr(ext_pull, "fetch_and_ingest", fake_fetch)
+    monkeypatch.setattr(ext_pull.asyncio, "sleep", fake_sleep)
+
+    await scheduler._run_loop(config)
+
+    assert startup_flags == [True, False]
+    assert fetch_count == 2

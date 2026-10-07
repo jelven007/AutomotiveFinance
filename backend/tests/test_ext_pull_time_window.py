@@ -18,6 +18,7 @@ import pytest
 
 from app.market_time import CN_TZ
 from app.services import ext_pull
+from app.services.ext_data import PullConfig
 
 
 @pytest.fixture
@@ -55,6 +56,79 @@ def test_no_window_configured_is_still_unrestricted(at_beijing) -> None:
     assert ext_pull._in_time_window(None, None) is True
     assert ext_pull._in_time_window("09:30", None) is True
     assert ext_pull._in_time_window(None, "15:00") is True
+
+
+def test_builtin_preset_startup_run_bypasses_window_and_trading_day(
+    at_beijing,
+    monkeypatch,
+) -> None:
+    """休市或盘后重启也必须先刷新一次内置概念/行业快照。"""
+    from app.services import trading_day
+
+    at_beijing(datetime(2026, 3, 7, 20, 0, tzinfo=CN_TZ))  # 周六且在窗口外
+    monkeypatch.setattr(trading_day, "is_trading_day", lambda: False)
+    pull = PullConfig(time_window_start="09:00", time_window_end="16:00")
+
+    assert ext_pull._scheduled_pull_skip_reason(
+        "ext_gn_ths",
+        pull,
+        is_startup_run=True,
+    ) is None
+    assert ext_pull._scheduled_pull_skip_reason(
+        "ext_hy_ths",
+        pull,
+        is_startup_run=False,
+    ) == "不在拉取时间窗口内"
+
+
+def test_builtin_preset_subsequent_run_requires_confirmed_trading_day(
+    at_beijing,
+    monkeypatch,
+) -> None:
+    """盘中后续轮次只在交易日探针明确为 True 时执行。"""
+    from app.services import trading_day
+
+    at_beijing(datetime(2026, 3, 2, 10, 0, tzinfo=CN_TZ))
+    pull = PullConfig(time_window_start="09:00", time_window_end="16:00")
+
+    monkeypatch.setattr(trading_day, "is_trading_day", lambda: False)
+    assert ext_pull._scheduled_pull_skip_reason(
+        "ext_gn_ths",
+        pull,
+        is_startup_run=False,
+    ) == "非交易日"
+
+    monkeypatch.setattr(trading_day, "is_trading_day", lambda: None)
+    assert ext_pull._scheduled_pull_skip_reason(
+        "ext_gn_ths",
+        pull,
+        is_startup_run=False,
+    ) == "交易日状态未知"
+
+    monkeypatch.setattr(trading_day, "is_trading_day", lambda: True)
+    assert ext_pull._scheduled_pull_skip_reason(
+        "ext_gn_ths",
+        pull,
+        is_startup_run=False,
+    ) is None
+
+
+def test_custom_pull_is_not_forced_to_follow_a_share_trading_days(
+    at_beijing,
+    monkeypatch,
+) -> None:
+    """用户自定义扩展源只受自己的时间窗口约束。"""
+    from app.services import trading_day
+
+    at_beijing(datetime(2026, 3, 2, 10, 0, tzinfo=CN_TZ))
+    monkeypatch.setattr(trading_day, "is_trading_day", lambda: False)
+    pull = PullConfig(time_window_start="09:00", time_window_end="16:00")
+
+    assert ext_pull._scheduled_pull_skip_reason(
+        "custom_dataset",
+        pull,
+        is_startup_run=False,
+    ) is None
 
 
 async def test_default_landing_date_is_the_beijing_date(at_beijing, monkeypatch) -> None:
