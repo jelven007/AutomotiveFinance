@@ -618,6 +618,12 @@ PORT=3018                      # 服务端口
 
 | 文档                                                                                               | 内容                                                                 |
 | :------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------- |
+| [docs/README.md](./docs/README.md)                                                                 | 文档中心、生命周期覆盖矩阵、事实源和按角色阅读路径                   |
+| [docs/requirements.md](./docs/requirements.md)                                                     | v0.3.3 需求基线、范围、非目标和版本验收条件                          |
+| [docs/architecture.md](./docs/architecture.md)                                                     | 当前系统架构、数据流、单进程约束、存储和故障边界                     |
+| [docs/testing.md](./docs/testing.md)                                                               | 测试分层、CI 门禁、金融正确性与发布验收矩阵                          |
+| [docs/operations.md](./docs/operations.md)                                                         | 巡检、日志、调度、备份恢复、升级回滚和故障处理                       |
+| [docs/release-operations.md](./docs/release-operations.md)                                         | 版本、产物、上线观察、回滚、反馈与运营复盘                           |
 | [docs/deployment.md](./docs/deployment.md)                                                         | 部署方式(Dev / Docker / GH Actions)、老 CPU 兼容、更新代码、访问密码 |
 | [docs/configuration.md](./docs/configuration.md)                                                   | 所有 `.env` 配置项详解(数据源、AI、服务、密码、数据目录)             |
 | [docs/features.md](./docs/features.md)                                                             | 各功能模块详细说明(选股/指标/回测/监控/个股分析/数据扩展/开放接口)   |

@@ -1,6 +1,9 @@
 # 部署指南
 
-本项目的几种运行方式，按推荐程度排序。配置项详解见 [configuration.md](./configuration.md)。
+本项目的几种运行方式，按推荐程度排序。配置项详解见
+[配置说明](./configuration.md)；生产巡检、备份与恢复见
+[运维手册](./operations.md)；正式版本放行和回滚见
+[发布与上线运营](./release-operations.md)。
 
 > 📌 前置依赖(仅方式 D 需要):Python ≥ 3.11 · Node ≥ 20 · [`uv`](https://docs.astral.sh/uv/) · `pnpm`（`npm i -g pnpm`）
 
@@ -16,6 +19,8 @@ docker run -d --name tsp -p 3018:3018 -v ${PWD}/data:/app/data ghcr.io/shy3130/t
 ```
 
 - 需要配置时:从 `.env.example` 复制出 `.env`,命令里加 `--env-file .env`。
+- `latest` 会被 `main` 的每次推送刷新，只适合快速体验；生产环境应在验收后固定
+  `v*` 版本标签、提交 SHA 标签或镜像 digest。
 - 镜像默认**不含** stock-sdk 插件(合规考虑),也不含 `legacy-cpu` / `backtest` extras —— 老 CPU(无 AVX2)或需要 vectorbt 回测时,请用方式 B 通过 `BACKEND_EXTRAS` 自构建。
 - 跑自己改过的代码:fork 后到仓库 Actions 页启用 workflow(fork 默认禁用),构建出的 `ghcr.io/<你的用户名>/tick-stock-panel` 用法相同。
 - 想要 compose 全套挂载(`.env` / `tiers.yaml` / 数据卷):参考根目录 `docker-compose.yml`,把 `build:` 段换成 `image: ghcr.io/shy3130/tick-stock-panel:latest`。
