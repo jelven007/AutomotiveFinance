@@ -2,12 +2,16 @@
 
 数据源插件是可选的行情数据来源(fuyao、stock-sdk、akshare 等),作为独立模块放在
 `backend/app/plugins/` 下。services 层(kline_sync / quote_service / financial_sync)
-全部通过统一路由点分流:插件声明了某数据集就走插件,未声明自动回退 TickFlow。
+通过各数据集的独立偏好分流。所选日K、除权或分钟源缺能力、加载失败或返回空数据时,
+保持该来源并报告不可用或空结果, 不自动换用 TickFlow。
 因此**一个合格的插件只需要正确实现契约,不需要改动任何 service / API 代码**;
 反过来,插件也必须遵守内部数据契约(单位、代码格式、复权口径),框架不会替你转换。
 
 > 无代码接入(纯 HTTP YAML 配置)请看 [custom-data-source.md](./custom-data-source.md),
 > 两种方式遵循同一套内部数据契约。
+>
+> mootdx 的安装、环境变量、单位校准及覆盖限制见
+> [mootdx 数据源](./mootdx-data-source.md)。
 
 ## 快速上手
 
@@ -36,8 +40,9 @@ install_hint: "pip install xxx"          # 未装依赖时显示的安装提示
 homepage: "https://example.com"          # (可选)官网/申请地址, 显示在设置页 Key 配置说明中
 ```
 
-只声明真实提供的数据集;未声明的数据集 `provider_has_dataset` 返回 False,自动回退
-TickFlow。不要声明做不了的数据集(粒度含义见下文"能力声明的粒度")。
+只声明真实提供的数据集;未声明的数据集 `provider_has_dataset` 返回 False。
+能力矩阵以 `usable` 表示当前是否可用。不要声明做不了的数据集。
+股票、指数和 ETF 标的维表跟随日K源; 缺少标的接口时保留本地维表。
 
 #### api_key_env(界面配置 API Key)
 
@@ -182,7 +187,7 @@ class MyProvider:
     def test_dataset(self, dataset: str, symbols=None) -> dict:
         """(强烈建议)设置页"试拉"按钮。
         返回 {provider, dataset, rows, columns, preview, error?}; 未支持的数据集
-        返回 error 字段说明会回退 TickFlow。"""
+        返回 error 字段说明当前数据集不可用。"""
 ```
 
 `get_depth_batch` 返回结构如下。价格和数量数组均按一档到五档排列;数量单位为“手”,
@@ -213,7 +218,7 @@ provider 不应自行切换或回退到其他数据源。
 
 入口守卫（`kline_sync._enforce_minute_beijing_wallclock`）对所有分钟源强制归一：
 带时区 → 自动换算成北京墙钟；naive 但整体呈 UTC 特征（如 01:30）→ 自动 +8 纠偏并
-记日志；完全无法识别的口径 → 拒收并回退 TickFlow。契约仍要求源头写对，守卫只是兜底。
+记日志；完全无法识别的口径 → 拒收并保留本地数据。契约仍要求源头写对，守卫只是兜底。
 
 可选类属性 `minute_history_days = 5` 声明 1 分钟历史深度（交易日）；未声明视为
 深历史（TickFlow 基准）。浅源（如 stock-sdk 免费分时仅保留最近 5 个交易日）声明后，
@@ -246,7 +251,8 @@ provider 不应自行切换或回退到其他数据源。
 | `get_realtime` | **软失败**: 返回 `[]` + warning 日志, 保证轮询线程不中断 |
 | `get_realtime_indices` | **软失败**: 返回 `None` + warning 日志, 保留上轮有效缓存; 成功无数据返回 `[]` |
 | `get_depth_batch` | 单批异常由服务隔离并保留其他批次; 不跨数据源回退 |
-| `get_minute` | 抛异常时调用方自动回退 TickFlow 重试 |
+| `get_minute` | 异常隔离并记录日志, 返回空帧且不跨源回退 |
+| `get_instruments` | 不完整目录不得作为完整快照发布; 异常或空列表保留原维表 |
 | `get_daily` / `get_adj_factors` / `get_financials` | 异常由上层同步流程捕获记录; 无数据返回空 DataFrame |
 | `iter_daily` | 可选; 每批必须符合 `get_daily` 契约。流正常结束后才提交 staging; 未捕获异常会丢弃 staging。provider 内已定义的单标的软失败语义保持不变 |
 
@@ -274,8 +280,8 @@ provider 不应自行切换或回退到其他数据源。
 ### config.datasets 的作用
 
 `provider_has_dataset(name, dataset)` 通过 `dataset in provider.config.datasets` 判断。
-这是 services 层路由的关键: 用户在设置页选了插件, 但某数据集未声明时, 该数据集
-自动回退 TickFlow。
+这是 services 层能力检查的关键: 不可用与“已选择 TickFlow”是两种状态。
+已知内置插件即使因依赖缺失不能加载, 读取偏好时仍保留选择, 避免重启后静默换源。
 
 ```python
 class MyConfig:

@@ -170,8 +170,8 @@ def test_custom_provider_utc_frame_selfhealed(monkeypatch):
     assert df["datetime"].to_list() == [datetime(2026, 1, 15, 9, 30), datetime(2026, 1, 15, 13, 0)]
 
 
-def test_custom_provider_garbage_datetime_falls_back(monkeypatch):
-    """插件返回无法识别口径 → fail-closed 回退 TickFlow。"""
+def test_custom_provider_garbage_datetime_preserves_source(monkeypatch):
+    """Invalid timestamps return no data and never trigger a different provider."""
     mock_provider = MagicMock()
     mock_provider.get_minute = MagicMock(return_value=_minute_frame(
         [datetime(2026, 1, 15, 21, 30)]))
@@ -181,5 +181,5 @@ def test_custom_provider_garbage_datetime_falls_back(monkeypatch):
         ["600519.SH"], datetime(2026, 1, 15, 9, 25), datetime(2026, 1, 15, 15, 5),
         asset_type="stock",
     )
-    assert fallback is True
-    assert df is None
+    assert fallback is False
+    assert df.is_empty()

@@ -6,18 +6,26 @@ quotes.get_by_universes 作为补充来源。日K统一走 klines.batch。
 """
 from __future__ import annotations
 
-import logging
 import gc
+import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import polars as pl
 
 from app.indicators.pipeline import compute_enriched
+from app.market_time import cn_now
 from app.services import kline_sync, preferences
+from app.services.instrument_sync import _fetch_instruments_via_provider
 from app.tickflow.capabilities import Cap, CapabilitySet
 from app.tickflow.client import get_client
-from app.tickflow.rate_limits import chunked, min_batch, resolve_limit, sleep_between_batches
+from app.tickflow.rate_limits import (
+    ResolvedLimit,
+    chunked,
+    min_batch,
+    resolve_limit,
+    sleep_between_batches,
+)
 from app.tickflow.repository import KlineRepository
 
 logger = logging.getLogger(__name__)
@@ -81,6 +89,24 @@ def _fetch_instruments_by_type(instrument_type: str, asset_type_label: str) -> p
     instrument_type: 'index' / 'etf'
     asset_type_label: 写入 instruments 表的 asset_type 标记('index' / 'etf')
     """
+    custom_rows = _fetch_instruments_via_provider(instrument_type)
+    if custom_rows is not None:
+        rows = [
+            {"symbol": str(row["symbol"]), "name": row.get("name") or str(row["symbol"])}
+            for row in custom_rows if row.get("symbol")
+        ]
+        if not rows:
+            return pl.DataFrame()
+        return (
+            pl.DataFrame(rows)
+            .with_columns(
+                pl.col("symbol").str.split(".").list.first().alias("code"),
+                pl.lit(asset_type_label).alias("asset_type"),
+            )
+            .unique(subset=["symbol"], keep="last")
+            .sort("symbol")
+        )
+
     tf = get_client()
     rows: list[dict] = []
     for ex in _EXCHANGES:
@@ -97,6 +123,7 @@ def _fetch_instruments_by_type(instrument_type: str, asset_type_label: str) -> p
                 })
         except Exception as e:  # noqa: BLE001
             logger.warning("get_instruments(%s, type=%s) failed: %s", ex, instrument_type, e)
+            return pl.DataFrame()
 
     if not rows:
         return pl.DataFrame()
@@ -136,7 +163,7 @@ def sync_index_instruments(
             etf_parts.append(etf_df)
 
     # 2) 付费补充:Starter+ 用 get_by_universes 补指数(仅当开启指数拉取)
-    if pull_index:
+    if pull_index and preferences.get_daily_data_provider() == "tickflow":
         capset = None
         try:
             from app.tickflow import policy
@@ -204,7 +231,8 @@ def sync_and_persist_index_daily(
     否则取 index_instruments 表全量(指数+ETF 合并存储)。
     on_chunk_done(current, total) 每个批次完成后回调。
     """
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
+    custom_daily = preferences.get_daily_data_provider() != "tickflow"
+    if not custom_daily and not capset.has(Cap.KLINE_DAILY_BATCH):
         return 0
 
     if symbols_override:
@@ -221,10 +249,13 @@ def sync_and_persist_index_daily(
         if instruments.is_empty() or "symbol" not in instruments.columns:
             return 0
         symbols = sorted(set(instruments["symbol"].to_list()))
-    limit = resolve_limit(capset, Cap.KLINE_DAILY_BATCH)
+    limit = (
+        ResolvedLimit(batch=None, rpm=None) if custom_daily
+        else resolve_limit(capset, Cap.KLINE_DAILY_BATCH)
+    )
     batch_size = min_batch(preferences.get_index_daily_batch_size(), limit)
 
-    end_time = end_date or datetime.now()
+    end_time = end_date or cn_now()
     start_time = start_date or (end_time - timedelta(days=365))
 
     total_rows = 0
@@ -237,6 +268,7 @@ def sync_and_persist_index_daily(
             batch_size=None,
             start_time=start_time,
             end_time=end_time,
+            asset_type="index",
         )
         if raw.is_empty():
             continue
@@ -339,7 +371,8 @@ def sync_and_persist_etf_daily(
     """同步 ETF 日K到独立 kline_etf_* parquet,并计算 ETF enriched。
     on_chunk_done(current, total) 每个批次完成后回调。
     """
-    if not capset.has(Cap.KLINE_DAILY_BATCH):
+    custom_daily = preferences.get_daily_data_provider() != "tickflow"
+    if not custom_daily and not capset.has(Cap.KLINE_DAILY_BATCH):
         return 0
 
     if symbols_override:
@@ -355,10 +388,13 @@ def sync_and_persist_etf_daily(
     if not symbols:
         return 0
 
-    limit = resolve_limit(capset, Cap.KLINE_DAILY_BATCH)
+    limit = (
+        ResolvedLimit(batch=None, rpm=None) if custom_daily
+        else resolve_limit(capset, Cap.KLINE_DAILY_BATCH)
+    )
     batch_size = min_batch(preferences.get_index_daily_batch_size(), limit)
 
-    end_time = end_date or datetime.now()
+    end_time = end_date or cn_now()
     start_time = start_date or (end_time - timedelta(days=365))
 
     total_rows = 0
@@ -372,6 +408,7 @@ def sync_and_persist_etf_daily(
             batch_size=None,
             start_time=start_time,
             end_time=end_time,
+            asset_type="etf",
         )
         if raw.is_empty():
             continue

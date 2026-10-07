@@ -667,6 +667,8 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
         adj_factor_provider: pick('adj_factor'),
         realtime_data_provider: pick('realtime'),
         minute_data_provider: pick('minute'),
+        full_minute_data_provider: pick('full_minute'),
+        depth5_data_provider: pick('depth5'),
         financial_data_provider: pick('financial'),
       })
     },

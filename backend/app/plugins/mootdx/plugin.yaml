@@ -1,0 +1,12 @@
+# mootdx / 通达信公开行情协议数据源。
+# 无 API Key；可选 MOOTDX_SERVER=IP:PORT 指定行情服务器。
+
+name: mootdx
+display_name: "mootdx"
+runtime: python
+entry: app.plugins.mootdx.provider:MootdxProvider
+check: app.plugins.mootdx.client:availability
+datasets: [realtime, daily, adj_factor, minute, depth5, financial, full_minute]
+description: "基于 mootdx 的免费通达信行情源。支持沪深 A 股标的、原始日K、除权因子、实时行情、分钟K、五档盘口及财务报表；全量分钟通过逐标的并发实取，不生成合成数据。公开行情服务器可能限流或临时不可达，北交所证券列表/实时盘口受 tdxpy 协议能力限制。"
+install_hint: "点击安装 Python 依赖。可选通过 MOOTDX_SERVER=IP:PORT 固定可用的通达信行情服务器。"
+homepage: "https://github.com/mootdx/mootdx"

@@ -741,7 +741,8 @@ class QuoteService:
                     replace_index_cache=replace_index_cache,
                     final_boundary_ms=final_boundary_ms,
                 )
-            # 自定义源未配置 realtime → 回退 TickFlow
+            logger.warning("selected realtime provider %s is unavailable", provider_name)
+            return
 
         from app.tickflow.client import get_paid_realtime_client
 

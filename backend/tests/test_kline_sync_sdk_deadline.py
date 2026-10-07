@@ -82,6 +82,7 @@ def test_minute_loop_timeout_keeps_heartbeat(monkeypatch):
 def test_daily_loop_timeout_marks_failed(monkeypatch):
     """日K分块超时 → failed_out 收编本批(上层可判「部分失败」), 心跳推进。"""
     _fast_deadline(monkeypatch)
+    monkeypatch.setattr(kline_sync.preferences, "get_daily_data_provider", lambda: "tickflow")
     monkeypatch.setattr(kline_sync, "get_client", lambda: _HangingClient())
 
     beats: list[tuple[int, int]] = []

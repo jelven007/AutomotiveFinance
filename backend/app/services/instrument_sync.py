@@ -8,11 +8,11 @@ Starter+ 盘后可用 quotes.get(universes) 顺便补充 name。
 from __future__ import annotations
 
 import logging
-from datetime import date
 from pathlib import Path
 
 import polars as pl
 
+from app.market_time import cn_today
 from app.services.fs_utils import atomic_write_parquet
 from app.tickflow.client import get_client
 
@@ -34,21 +34,18 @@ def _flatten_instruments(items: list[dict]) -> list[dict]:
             "type": item.get("type"),
         }
         ext = item.get("ext") or {}
-        row["listing_date"] = ext.get("listing_date")
-        row["total_shares"] = ext.get("total_shares")
-        row["float_shares"] = ext.get("float_shares")
-        row["tick_size"] = ext.get("tick_size")
-        row["limit_up"] = ext.get("limit_up")
-        row["limit_down"] = ext.get("limit_down")
+        for field in ("listing_date", "total_shares", "float_shares", "tick_size",
+                      "limit_up", "limit_down"):
+            row[field] = ext.get(field, item.get(field))
         rows.append(row)
     return rows
 
 
-def _fetch_instruments_via_provider() -> list[dict] | None:
-    """若当前日K数据源不是 tickflow 且该 provider 提供 get_instruments, 用它拉标的维表。
+def _fetch_instruments_via_provider(asset_type: str = "stock") -> list[dict] | None:
+    """Follow the selected daily provider for all instrument catalogs.
 
-    返回 flatten 行列表; 未命中(仍应走 tickflow)时返回 None。
-    标的维表跟随日K数据源(二者天然耦合, 无独立偏好项)。
+    Only an explicit TickFlow selection returns None. An unavailable custom
+    catalog returns [], so callers keep their last snapshot without mixing sources.
     """
     from app.services import preferences
 
@@ -57,18 +54,22 @@ def _fetch_instruments_via_provider() -> list[dict] | None:
         return None
     from app.data_providers import custom as custom_sources
 
-    if not custom_sources.is_custom_provider(provider_name):
-        return None
-    provider = custom_sources.get_provider(provider_name)
-    if not hasattr(provider, "get_instruments"):
-        return None
     try:
-        items = provider.get_instruments("stock") or []
+        if not custom_sources.is_custom_provider(provider_name):
+            logger.warning("instrument provider %s is unavailable", provider_name)
+            return []
+        provider = custom_sources.get_provider(provider_name)
+        if not callable(getattr(provider, "get_instruments", None)):
+            logger.warning("provider %s has no instrument catalog", provider_name)
+            return []
+        items = provider.get_instruments(asset_type)
+        if isinstance(items, pl.DataFrame):
+            items = items.to_dicts()
+        rows = _flatten_instruments(items or [])
     except Exception as e:  # noqa: BLE001
         logger.warning("provider %s get_instruments 失败: %s", provider_name, e)
-        return None
-    rows = _flatten_instruments(items)
-    logger.info("instruments via %s: %d stocks", provider_name, len(rows))
+        return []
+    logger.info("instruments via %s: %d %s", provider_name, len(rows), asset_type)
     return rows
 
 
@@ -85,17 +86,21 @@ def sync_instruments(data_dir: Path) -> int:
         for ex in _EXCHANGES:
             try:
                 items = tf.exchanges.get_instruments(ex, instrument_type="stock")
+                if not items and ex in {"SH", "SZ"}:
+                    logger.warning("empty %s catalog; keeping previous instruments", ex)
+                    return 0
                 if items:
                     all_rows.extend(_flatten_instruments(items))
                     logger.info("instruments %s: %d stocks", ex, len(items))
             except Exception as e:
                 logger.warning("get_instruments(%s) failed: %s", ex, e)
+                return 0
 
     if not all_rows:
         return 0
 
     df = pl.DataFrame(all_rows)
-    df = df.with_columns(pl.lit(date.today()).alias("as_of"))
+    df = df.with_columns(pl.lit(cn_today()).alias("as_of"))
 
     out = data_dir / "instruments" / "instruments.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)

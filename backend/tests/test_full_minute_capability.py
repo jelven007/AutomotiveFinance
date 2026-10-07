@@ -32,7 +32,11 @@ def test_policy_labels_and_cache_schema():
     assert _CACHE_SCHEMA_VERSION >= 6
 
 
-def test_service_gate_requires_universe_not_batch_alone():
+def test_service_gate_requires_universe_not_batch_alone(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.preferences.get_full_minute_data_provider", lambda: "tickflow",
+    )
+
     class _Repo:
         store = SimpleNamespace(data_dir=Path("."))
 

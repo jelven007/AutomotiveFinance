@@ -7,10 +7,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from types import SimpleNamespace
 
 import polars as pl
-import pytest
 
 from app.services import index_sync, kline_sync
 from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
@@ -118,8 +116,8 @@ def test_etf_adj_window_with_file_continues_from_last_event(tmp_path):
     assert got == datetime(2026, 1, 15, 0, 0)
 
 
-def test_sync_adj_factor_etf_custom_empty_falls_back_to_tickflow(tmp_path, monkeypatch):
-    """扶摇等自定义源对 ETF 空返回时, 有 TickFlow 除权能力则回退, 不能当成无事件。"""
+def test_sync_adj_factor_etf_custom_empty_preserves_selected_source(tmp_path, monkeypatch):
+    """Empty selected-source data must not be replaced by another source's factors."""
     repo = KlineRepository(DataStore(tmp_path))
     empty = pl.DataFrame(
         schema={
@@ -146,15 +144,13 @@ def test_sync_adj_factor_etf_custom_empty_falls_back_to_tickflow(tmp_path, monke
     )
     monkeypatch.setattr(custom_sources, "get_provider", lambda name: _EmptyETF())
 
-    class _Klines:
-        def ex_factors(self, symbols, **kwargs):
-            return {ETF: [{"trade_date": EX, "ex_factor": EX_FACTOR}]}
+    def unexpected_client():
+        raise AssertionError("must not fetch TickFlow for an explicit custom selection")
 
-    monkeypatch.setattr(
-        kline_sync,
-        "get_client",
-        lambda: SimpleNamespace(klines=_Klines()),
-    )
+    monkeypatch.setattr(kline_sync, "get_client", unexpected_client)
+    _write_factor(tmp_path, EX, EX_FACTOR)
+    target = tmp_path / "adj_factor_etf" / "all.parquet"
+    before = target.read_bytes()
 
     written, affected = kline_sync.sync_adj_factor(
         [ETF],
@@ -162,7 +158,6 @@ def test_sync_adj_factor_etf_custom_empty_falls_back_to_tickflow(tmp_path, monke
         _capset(),
         asset_type="etf",
     )
-    assert written == 1
-    assert affected == [ETF]
-    stored = pl.read_parquet(tmp_path / "adj_factor_etf" / "all.parquet")
-    assert stored["ex_factor"][0] == pytest.approx(EX_FACTOR)
+    assert written == 0
+    assert affected == []
+    assert target.read_bytes() == before

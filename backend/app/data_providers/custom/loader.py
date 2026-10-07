@@ -186,29 +186,65 @@ def install_plugin(name: str) -> tuple[bool, str]:
             req = pdir / "requirements.txt"
             if not req.exists():
                 return False, "Python 型插件需要 requirements.txt"
+            # 某些上游包带有与主项目冲突的过时传递依赖约束。插件可把这类主包
+            # 放进 requirements-no-deps.txt, loader 先 --no-deps 安装, 再按普通
+            # requirements.txt 安装经项目验证的兼容依赖。
+            req_no_deps = pdir / "requirements-no-deps.txt"
+            install_specs = [
+                *(([(req_no_deps, True)]) if req_no_deps.exists() else []),
+                (req, False),
+            ]
             uv_bin = shutil.which("uv")
-            if uv_bin:
-                result = subprocess.run(
-                    [uv_bin, "pip", "install", "--python", sys.executable, "-r", str(req)],
-                    capture_output=True, text=True, timeout=300,
-                    env={**__import__("os").environ, "UV_HTTP_TIMEOUT": "300"},
-                )
-                # exit 2 通常是配置文件解析错误, 绕过配置重试
-                # --no-config 会丢镜像, 显式传国内镜像加速 (与用户 uv.toml 意图一致)
-                if result.returncode == 2:
+            result = None
+            for req_file, no_deps in install_specs:
+                if uv_bin:
+                    cmd = [uv_bin, "pip", "install", "--python", sys.executable]
+                    if no_deps:
+                        cmd.append("--no-deps")
+                    cmd.extend(["-r", str(req_file)])
                     result = subprocess.run(
-                        [uv_bin, "pip", "install", "--no-config",
-                         "--index-url", "https://pypi.tuna.tsinghua.edu.cn/simple",
-                         "--python", sys.executable,
-                         "-r", str(req)],
-                        capture_output=True, text=True, timeout=300,
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
                         env={**__import__("os").environ, "UV_HTTP_TIMEOUT": "300"},
                     )
-            else:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "-r", str(req)],
-                    capture_output=True, text=True, timeout=300,
-                )
+                    # exit 2 通常是配置文件解析错误, 绕过配置重试
+                    # --no-config 会丢镜像, 显式传国内镜像加速 (与用户 uv.toml 意图一致)
+                    if result.returncode == 2:
+                        retry_cmd = [
+                            uv_bin,
+                            "pip",
+                            "install",
+                            "--no-config",
+                            "--index-url",
+                            "https://pypi.tuna.tsinghua.edu.cn/simple",
+                            "--python",
+                            sys.executable,
+                        ]
+                        if no_deps:
+                            retry_cmd.append("--no-deps")
+                        retry_cmd.extend(["-r", str(req_file)])
+                        result = subprocess.run(
+                            retry_cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                            env={**__import__("os").environ, "UV_HTTP_TIMEOUT": "300"},
+                        )
+                else:
+                    cmd = [sys.executable, "-m", "pip", "install"]
+                    if no_deps:
+                        cmd.append("--no-deps")
+                    cmd.extend(["-r", str(req_file)])
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                if result.returncode != 0:
+                    break
         else:
             return False, f"runtime={runtime} 无需安装依赖"
     except subprocess.TimeoutExpired:
@@ -216,6 +252,8 @@ def install_plugin(name: str) -> tuple[bool, str]:
     except Exception as e:  # noqa: BLE001
         return False, f"安装失败: {e}"
 
+    if result is None:
+        return False, "安装失败: 未执行安装命令"
     if result.returncode != 0:
         # 取 stderr 的第一个 error: 行(真正的错误原因), 避免把 uv 的长字段列表返回给用户
         raw = (result.stderr or result.stdout or "").strip()
@@ -259,10 +297,20 @@ def uninstall_plugin(name: str) -> tuple[bool, str]:
         req = pdir / "requirements.txt"
         if not req.exists():
             return False, "Python 型插件缺少 requirements.txt, 无法自动卸载"
-        # 读 requirements.txt 拿包名, 逐个 pip uninstall -y
-        pkgs = [l.strip().split("==")[0].split(">=")[0].strip()
-                for l in req.read_text().splitlines()
-                if l.strip() and not l.startswith("#")]
+        # 读普通与 --no-deps 清单拿包名, 逐个 pip uninstall。按出现顺序去重。
+        req_files = [req]
+        req_no_deps = pdir / "requirements-no-deps.txt"
+        if req_no_deps.exists():
+            req_files.append(req_no_deps)
+        pkgs: list[str] = []
+        for req_file in req_files:
+            for raw in req_file.read_text(encoding="utf-8").splitlines():
+                line = raw.split("#", 1)[0].strip()
+                if not line or line.startswith("-"):
+                    continue
+                match = re.match(r"^([A-Za-z0-9_.-]+)", line)
+                if match and match.group(1) not in pkgs:
+                    pkgs.append(match.group(1))
         if not pkgs:
             return True, "requirements.txt 无有效包名"
         import sys

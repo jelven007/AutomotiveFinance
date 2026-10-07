@@ -139,6 +139,9 @@ class MinuteRefreshService:
         full_minute 数据集且被路由时, 由 policy._augment_custom_sources 补授
         同一能力键 — 门控口径对两类源统一。
         """
+        if self.active_provider() != "tickflow":
+            provider, _ = self._resolve_custom()
+            return provider is not None
         capset = getattr(self._app_state, "capabilities", None) if self._app_state else None
         if capset is None:
             return False
@@ -159,8 +162,8 @@ class MinuteRefreshService:
     def _resolve_custom(self) -> tuple[object | None, str]:
         """解析自定义源。返回 (provider_or_None, effective_name):
 
-        - 偏好 tickflow / 源未声明 full_minute 数据集 / 解析异常 → (None, "tickflow")
-          (与 minute 数据集同纪律: 静默降级 TickFlow, 能力门控决定能否真正运行)
+        - 偏好 tickflow → (None, "tickflow")
+        - 自定义源不可用 → (None, name), 保留选择并停止本轮
         - 成功 → (provider, name)
         """
         from app.services import kline_sync
@@ -168,13 +171,9 @@ class MinuteRefreshService:
         name = self.active_provider()
         if name == "tickflow":
             return (None, "tickflow")
-        provider, use_tickflow, err = kline_sync._resolve_full_minute_provider(name)
-        if use_tickflow:
-            if err is not None:
-                logger.warning(
-                    "full_minute provider %s 解析失败, 本轮降级 TickFlow: %s", name, err,
-                )
-            return (None, "tickflow")
+        provider, _, err = kline_sync._resolve_full_minute_provider(name)
+        if err is not None:
+            logger.warning("full_minute provider %s unavailable: %s", name, err)
         return (provider, name)
 
     def _custom_supports_increment(self, provider: object) -> bool:
@@ -282,6 +281,9 @@ class MinuteRefreshService:
 
         t0 = time.perf_counter()
         custom, provider_name = self._resolve_custom()
+        if custom is None and provider_name != "tickflow":
+            self._state.last_error = f"full_minute provider {provider_name} unavailable"
+            return
         mode = self._select_mode()
         if mode == "increment" and custom is not None and not self._custom_supports_increment(custom):
             # 无廉价增量端点的源: 增量轮退化为修复轮 (全天批量幂等覆盖, 数据不丢)

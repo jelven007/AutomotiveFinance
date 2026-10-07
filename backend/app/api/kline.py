@@ -78,14 +78,16 @@ def _gzip_payload(request: Request, payload: dict, *, pref_key: str) -> dict | R
 
 def _minute_allowed(capset) -> bool:
     """是否有分钟K权限 (TickFlow Pro+ 或 custom minute 源)。"""
-    from app.tickflow.capabilities import Cap
-    if capset.has(Cap.KLINE_MINUTE_BATCH):
-        return True
     from app.services import preferences
+    from app.tickflow.capabilities import Cap
+
     provider = preferences.get_minute_data_provider()
+    if provider == "tickflow":
+        return capset.has(Cap.KLINE_MINUTE_BATCH)
     _, fallback, error = kline_sync._resolve_minute_provider(provider)
     if error is not None:
         logger.warning("minute provider resolution failed while checking access: %s", error)
+        return False
     return not fallback
 
 

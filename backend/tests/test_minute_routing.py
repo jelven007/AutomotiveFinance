@@ -159,10 +159,10 @@ def test_custom_provider_exception_no_500(monkeypatch):
     assert df_batch.is_empty()
 
 
-# ---------- 测试 4: 未配 minute dataset → 回退 TickFlow ----------
+# ---------- Missing minute dataset preserves the selected source ----------
 
-def test_provider_without_minute_dataset_fallback(monkeypatch):
-    """§4 测试 4: provider_has_dataset 返回 False → (None, True) 回退 TickFlow。"""
+def test_provider_without_minute_dataset_returns_empty(monkeypatch):
+    """An unavailable custom dataset returns empty without changing providers."""
     mock_provider = MagicMock()
     _setup_custom_provider(monkeypatch, mock_provider, has_dataset=False)
 
@@ -170,9 +170,8 @@ def test_provider_without_minute_dataset_fallback(monkeypatch):
         ["600519.SH"], None, None, asset_type="stock",
     )
 
-    assert fallback is True
-    assert df is None
-    # provider.get_minute 不应被调用 (回退决策在前)
+    assert fallback is False
+    assert df.is_empty()
     mock_provider.get_minute.assert_not_called()
 
 
@@ -598,10 +597,8 @@ def test_sync_and_persist_minute_holds_repository_write_lock(monkeypatch, tmp_pa
 
 # ---------- 测试 13: get_provider 异常时 fall through TickFlow (Issue 2) ----------
 
-def test_get_provider_exception_falls_back_to_tickflow(monkeypatch):
-    """Issue 2: get_provider raise ValueError →
-    _try_custom_minute 返回 (None, True), 无异常穿透。
-    """
+def test_get_provider_exception_preserves_source(monkeypatch):
+    """Resolver errors fail closed without escaping the isolation boundary."""
     monkeypatch.setattr(
         kline_sync.preferences,
         "get_minute_data_provider",
@@ -623,16 +620,14 @@ def test_get_provider_exception_falls_back_to_tickflow(monkeypatch):
         ["600519.SH"], None, None, asset_type="stock",
     )
 
-    assert fallback is True
-    assert df is None
+    assert fallback is False
+    assert df.is_empty()
 
 
 # ---------- 测试 14: provider_has_dataset 异常时 fall through (Issue 2) ----------
 
-def test_provider_has_dataset_exception_falls_back(monkeypatch):
-    """Issue 2: provider_has_dataset raise →
-    _try_custom_minute 返回 (None, True), 无异常穿透。
-    """
+def test_provider_has_dataset_exception_preserves_source(monkeypatch):
+    """Registry errors return empty without a TickFlow retry."""
     monkeypatch.setattr(
         kline_sync.preferences,
         "get_minute_data_provider",
@@ -650,8 +645,8 @@ def test_provider_has_dataset_exception_falls_back(monkeypatch):
         ["600519.SH"], None, None, asset_type="stock",
     )
 
-    assert fallback is True
-    assert df is None
+    assert fallback is False
+    assert df.is_empty()
 
 
 # ---------- 测试 15-17: GenericHTTPProvider opt-in 参数传递 (Issue 3) ----------
@@ -769,32 +764,32 @@ def test_resolve_minute_provider_tickflow_returns_silent_fallback():
     assert err is None
 
 
-def test_resolve_minute_provider_no_dataset_returns_silent_fallback(monkeypatch):
-    """观察项加固: 配了 custom 但未配 minute dataset → (None, True, None) 静默降级。"""
+def test_resolve_minute_provider_no_dataset_returns_error(monkeypatch):
+    """A configured but unavailable dataset is an explicit capability error."""
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset",
         lambda name, ds: False,  # 已注册但未配 minute
     )
     provider, fallback, err = kline_sync._resolve_minute_provider("mock_src")
     assert provider is None
-    assert fallback is True
-    assert err is None  # 未配 ≠ 异常, 不应触发 warning
+    assert fallback is False
+    assert err is not None
 
 
 def test_resolve_minute_provider_has_dataset_exception_returns_err(monkeypatch):
-    """观察项加固: provider_has_dataset 抛异常 → (None, True, str(e)), 上层据此 warning。"""
+    """A broken registry must not change the selected source."""
     def _raising(name, ds):
         raise RuntimeError("registry corrupted")
     monkeypatch.setattr("app.data_providers.custom.provider_has_dataset", _raising)
     provider, fallback, err = kline_sync._resolve_minute_provider("mock_src")
     assert provider is None
-    assert fallback is True
+    assert fallback is False
     assert err is not None
     assert "registry corrupted" in err
 
 
 def test_resolve_minute_provider_get_provider_exception_returns_err(monkeypatch):
-    """观察项加固: provider_has_dataset 返回 True 但 get_provider 抛 → (None, True, str(e))。"""
+    """Provider construction failure is reported without cross-source fallback."""
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset",
         lambda name, ds: True,
@@ -804,7 +799,7 @@ def test_resolve_minute_provider_get_provider_exception_returns_err(monkeypatch)
     monkeypatch.setattr("app.data_providers.custom.get_provider", _raising_get)
     provider, fallback, err = kline_sync._resolve_minute_provider("mock_src")
     assert provider is None
-    assert fallback is True
+    assert fallback is False
     assert err is not None
     assert "not found" in err
 
@@ -844,8 +839,8 @@ def test_minute_allowed_resolver_exception_returns_false(monkeypatch):
     assert kline_api._minute_allowed(CapabilitySet()) is False
 
 
-def test_intraday_monitor_support_resolver_exception_falls_back(monkeypatch):
-    """监控入口解析自定义源失败后继续按 TickFlow 能力判断。"""
+def test_intraday_monitor_support_resolver_exception_unavailable(monkeypatch):
+    """TickFlow capabilities must not mask an unavailable selected provider."""
     from app.tickflow.capabilities import Cap, CapabilitySet
 
     monkeypatch.setattr(
@@ -863,8 +858,8 @@ def test_intraday_monitor_support_resolver_exception_falls_back(monkeypatch):
 
     support = kline_sync.intraday_monitor_support(capset)
 
-    assert support["available"] is True
-    assert support["source"] == "minute_batch"
+    assert support["available"] is False
+    assert support["source"] is None
 
 
 # ---------- 测试 20: sync_minute_single 拒绝指数 symbol (防污染 kline_minute) ----------

@@ -1,0 +1,4 @@
+# mootdx pins httpx<0.26, while the backend requires httpx>=0.27.
+# The provider does not use mootdx's HTTP helper, so install the package itself
+# without dependencies and install the compatible runtime dependencies below.
+mootdx==0.11.7

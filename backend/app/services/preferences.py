@@ -265,7 +265,10 @@ def get_daily_batch_compress() -> bool:
 def _allowed_data_providers() -> set[str]:
     try:
         from app.data_providers import custom as custom_sources
-        return _ALLOWED_DATA_PROVIDERS | custom_sources.names()
+        # A known plugin with missing dependencies is unavailable, not an invalid
+        # preference. Preserve its identity so capability checks can fail closed.
+        known_plugins = {plugin["name"] for plugin in custom_sources.list_plugins()}
+        return _ALLOWED_DATA_PROVIDERS | custom_sources.names() | known_plugins
     except Exception:  # noqa: BLE001
         return set(_ALLOWED_DATA_PROVIDERS)
 

@@ -60,7 +60,12 @@ def _fetch_table(
     latest_only: bool = True,
 ) -> pl.DataFrame:
     """通过当前财务数据源拉取一张标准化财务表。"""
+    from app.services import preferences
+
     is_custom = _financial_is_custom()
+    if not is_custom and preferences.get_financial_provider() != "tickflow":
+        logger.warning("sync_%s skipped: selected financial provider is unavailable", table)
+        return pl.DataFrame()
     if not is_custom and not capset.has(Cap.FINANCIAL):
         logger.info("sync_%s skipped: no FINANCIAL capability", table)
         return pl.DataFrame()
@@ -70,8 +75,8 @@ def _fetch_table(
 
     # 自定义数据源分流
     if is_custom:
-        from app.services import preferences
         from app.data_providers import custom as custom_sources
+
         try:
             provider = custom_sources.get_provider(preferences.get_financial_provider())
             df = provider.get_financials(table, symbols, latest_only=latest_only)
