@@ -3,6 +3,18 @@
 本次基于当前工作区代码校验，保留已有 mootdx 插件开发。核心修复属于 L3：
 现有 Provider 接口能够表达数据能力，但同步层的跨源回退和权限门控需要直接修正。
 
+## 本轮交付范围
+
+| 领域 | 变更 |
+| --- | --- |
+| 数据源 | 删除 stock-sdk 插件、Node bridge、专属测试、Docker 构建参数和全部入口；保留 TickFlow、mootdx、fuyao 与自定义源 |
+| 设置页 | 能力路由移除整组“恢复默认”；数据源图例由“芯片”改为“说明” |
+| AI 设置 | 预设收敛为自定义、RunningHub、OpenAI、DeepSeek、GLM、Codex CLI；移除通义千问和 Kimi 独立预设，并统一 GPT/GLM 展示名称 |
+| 数据发布 | 新增不可变 data release manifest、Provider 路由审计和发布 generation 一致性检查 |
+| 回测追溯 | 信号、因子、批量因子和策略回测返回 provenance，并持久化配置、数据 release、generation、统计和策略源码哈希 |
+| 健康检查 | 新增 `/health/live`、`/health/ready` 与 `/api/health`；Docker HEALTHCHECK 使用 readiness |
+| 构建发布 | `main` 仅在同一提交 CI 成功后构建镜像；tag/手动构建重跑质量门；pnpm、uv 使用冻结锁文件 |
+
 ## 修正后的架构约束
 
 - 保持模块化单体。部署约束为单个 API/调度服务主进程；回测仍使用隔离的
