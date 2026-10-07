@@ -14,6 +14,9 @@
 | 回测追溯 | 信号、因子、批量因子和策略回测返回 provenance，并持久化配置、数据 release、generation、统计和策略源码哈希 |
 | 健康检查 | 新增 `/health/live`、`/health/ready` 与 `/api/health`；Docker HEALTHCHECK 使用 readiness |
 | 构建发布 | `main` 仅在同一提交 CI 成功后构建镜像；tag/手动构建重跑质量门；pnpm、uv 使用冻结锁文件 |
+| API 契约 | Tier A 的 65 个开放端点具备显式成功响应 schema；JSON 响应使用 Pydantic 模型校验，SSE 声明媒体类型 |
+| 契约门禁 | 冻结 Tier A 方法/路径集合，并对可达请求、响应 schema 计算 SHA-256 指纹 |
+| 前端工程 | 从 `api.ts` 抽出通用 Fetch、超时和错误处理到 `lib/api/client.ts`，保持原领域导出兼容 |
 
 ## 修正后的架构约束
 
@@ -78,14 +81,19 @@
 Hook 调用顺序与基础运行错误作为 CI 阻断项；没有批量更改已有 effect 依赖，
 避免为了清空告警改变请求和刷新语义。
 
+开放 API 契约使用“稳定字段明确、加法字段透传”的兼容策略。模型序列化不会把
+处理函数未返回的可选缺省字段注入旧响应。`test_openapi_contract.py` 同时检查
+端点集合、成功响应 schema 和裁剪后的 Tier A schema 指纹，避免无意改变二开方
+和 MCP 依赖的边界。
+
 这些检查不等价于实盘网络容量、9:25 行情终态可靠性或真实历史数据完整性测试。
 
 本次执行结果：
 
 | 检查 | 结果 |
 | --- | --- |
-| 后端全量 pytest | 2,588 通过、7 跳过；77 条现有警告 |
-| 前端全量 Vitest | 18 个文件、103 项测试通过 |
+| 后端全量 pytest | 2,590 通过、7 跳过；77 条现有警告 |
+| 前端全量 Vitest | 19 个文件、108 项测试通过 |
 | TypeScript + Vite 生产构建 | 通过；保留 ECharts 大分块提示 |
 | ESLint | 0 错误、77 条现有依赖与清理建议 |
 | Docker 镜像构建与容器健康检查 | frozen lockfile 构建通过；liveness、readiness 与 HEALTHCHECK 正常 |

@@ -16,6 +16,8 @@ import time
 from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from app.api import contracts
+
 router = APIRouter(prefix="/api/intraday", tags=["quotes"])
 
 
@@ -84,7 +86,7 @@ def _fallback_index_quotes_from_daily(request: Request, symbols: list[str] | Non
     return out
 
 
-@router.get("/status")
+@router.get("/status", response_model=contracts.QuoteStatusResponse)
 def status(request: Request):
     """行情状态 (来自全局 QuoteService)。"""
     qs = _get_quote_service(request)
@@ -94,7 +96,7 @@ def status(request: Request):
             "quote_age_ms": None, "is_trading_hours": False, "last_fetch_ms": None}
 
 
-@router.get("/indices")
+@router.get("/indices", response_model=contracts.IndexQuotesResponse)
 def index_quotes(
     request: Request,
     symbols: str | None = Query(None, description="逗号分隔的指数 symbol 列表"),

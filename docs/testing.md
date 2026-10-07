@@ -58,6 +58,7 @@ uv run pytest tests -q
 cd backend
 uv run pytest tests/test_capability_matrix.py -q
 uv run pytest tests/backtest/test_cost_model.py -q
+uv run pytest tests/test_openapi_contract.py -q
 uv run ruff check app/path.py tests/path.py
 ```
 
@@ -94,8 +95,16 @@ git status --short
 | Backend | Ubuntu、Python 3.12 | `uv sync --extra dev --frozen`；`uv run pytest tests -q` |
 | Frontend | Ubuntu、Node 20、pnpm 9 | `pnpm test`；`pnpm lint`；`pnpm build` |
 
-后端全量测试包含 Tier A OpenAPI 契约快照。开放端点变化导致快照失败时，必须确认
-这是有意的兼容性变更，再更新快照和开放平台文档。
+后端全量测试包含 Tier A OpenAPI 契约门禁，检查：
+
+- 开放端点的方法和路径集合。
+- 每个成功响应是否具备 OpenAPI schema。
+- 仅包含 Tier A 可达组件的请求、响应 schema SHA-256 指纹。
+
+普通 Tier A JSON 端点必须声明 `response_model`；SSE 必须显式声明
+`text/event-stream` schema。响应模型允许透传未冻结的加法字段，但不能向实际
+JSON 注入处理函数未返回的缺省字段。快照失败时必须确认兼容性影响，再同步更新
+指纹、测试和开放平台文档。
 
 `.github/workflows/docker.yml` 的 `main` 构建只接受成功的 CI `workflow_run`；
 tag 和手动构建会在 workflow 内重新运行同等的后端与前端质量门。镜像依赖安装
@@ -122,7 +131,7 @@ tag 和手动构建会在 workflow 内重新运行同等的后端与前端质量
 | 回测 | 信号/成交时间、T+1、费用、滑点、涨跌停、缺口和尾部结算 |
 | 监控/通知 | 规则逻辑、去重、冷却、重启状态和通知失败隔离 |
 | 模拟盘 | 资金持仓守恒、订单状态、T+1、幂等结算和并发 |
-| API/Token/MCP | 成功、无数据、错误、scope 越权、契约快照 |
+| API/Token/MCP | 成功、无数据、错误、scope 越权、响应模型、端点快照和 schema 指纹 |
 | 前端页面 | 加载、空、错、禁用、切换、窄屏和刷新恢复 |
 | 调度/任务 | 合法状态转换、旧 `pending` 兼容、重复触发、两阶段取消、重启中断和失败终态 |
 | 历史证券状态 | SCD2 区间、同日重跑、名称/ST 变化、退市 tombstone 和首次采集前未知 |

@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from app.api import contracts
 from app.strategy import paper
 
 logger = logging.getLogger(__name__)
@@ -90,19 +91,19 @@ def _last_close(data_dir: Path, symbol: str, asset_type: str) -> float | None:
     return float(df["close"][0])
 
 
-@router.get("/accounts")
+@router.get("/accounts", response_model=contracts.PaperAccountsResponse)
 def list_accounts(request: Request):
     """账户列表 (带最新净值摘要, 供前端切换器)。"""
     return {"accounts": paper.list_accounts(_data_dir(request))}
 
 
-@router.get("/account")
+@router.get("/account", response_model=contracts.PaperAccountResponse)
 def get_account(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     acc = paper.get_account(_data_dir(request), _acc(request, account))
     return {"account": acc}
 
 
-@router.post("/account")
+@router.post("/account", response_model=contracts.PaperAccountResponse)
 def create_account(request: Request, body: AccountModel):
     try:
         acc = paper.create_account(
@@ -120,7 +121,7 @@ def create_account(request: Request, body: AccountModel):
     return {"account": acc}
 
 
-@router.get("/overview")
+@router.get("/overview", response_model=contracts.PaperOverviewResponse)
 def overview(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     """总览: 现金 + 持仓估值 + 账户状态。
 
@@ -151,7 +152,7 @@ def overview(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     return ov
 
 
-@router.post("/orders")
+@router.post("/orders", response_model=contracts.PaperOrderResponse)
 def create_order(request: Request, body: OrderModel, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     data_dir = _data_dir(request)
     acc_id = _acc(request, account)
@@ -170,7 +171,7 @@ def create_order(request: Request, body: OrderModel, account: str = Query(paper.
     return {"order": order}
 
 
-@router.get("/orders")
+@router.get("/orders", response_model=contracts.PaperOrdersResponse)
 def list_orders(request: Request, status: str | None = None, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     orders = paper.load_orders(_data_dir(request), _acc(request, account))
     if status:
@@ -179,7 +180,7 @@ def list_orders(request: Request, status: str | None = None, account: str = Quer
     return {"orders": orders}
 
 
-@router.delete("/orders/{order_id}")
+@router.delete("/orders/{order_id}", response_model=contracts.PaperOrderResponse)
 def cancel_order(request: Request, order_id: str, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     order, err = paper.cancel_order(_data_dir(request), order_id, _acc(request, account))
     if err:
@@ -187,31 +188,31 @@ def cancel_order(request: Request, order_id: str, account: str = Query(paper.DEF
     return {"order": order}
 
 
-@router.get("/trades")
+@router.get("/trades", response_model=contracts.PaperTradesResponse)
 def list_trades(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     fills = paper.load_fills(_data_dir(request), _acc(request, account))
     fills.sort(key=lambda f: f.get("seq", 0), reverse=True)
     return {"fills": fills}
 
 
-@router.get("/positions")
+@router.get("/positions", response_model=contracts.PaperPositionsResponse)
 def list_positions(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     data_dir = _data_dir(request)
     ov = paper.overview(data_dir, account_id=_acc(request, account))
     return {"holdings": ov.get("holdings", []), "initialized": ov.get("initialized", False)}
 
 
-@router.get("/nav")
+@router.get("/nav", response_model=contracts.PaperNavResponse)
 def list_nav(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     return {"nav": paper.load_nav(_data_dir(request), _acc(request, account))}
 
 
-@router.get("/stats")
+@router.get("/stats", response_model=contracts.PaperStatsResponse)
 def get_stats(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     return paper.stats(_data_dir(request), _acc(request, account))
 
 
-@router.get("/compare")
+@router.get("/compare", response_model=contracts.PaperCompareResponse)
 def compare_accounts(request: Request):
     """横向对比全部账户: 概览 + 回合统计 + 定版净值 (供对比表与净值叠加图)。
 
@@ -275,14 +276,14 @@ def compare_accounts(request: Request):
     return {"accounts": rows}
 
 
-@router.post("/rebuild")
+@router.post("/rebuild", response_model=contracts.PaperRebuildResponse)
 def rebuild(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     """由成交台账重建物化持仓与现金 (修复兜底)。"""
     positions = paper.rebuild_positions(_data_dir(request), _acc(request, account))
     return {"symbols": len(positions)}
 
 
-@router.post("/freeze")
+@router.post("/freeze", response_model=contracts.PaperAccountResponse)
 def freeze(request: Request, frozen: bool = True, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     """冻结/解冻账户: 冻结后拒绝新订单, 持仓只读。"""
     data_dir = _data_dir(request)
@@ -295,7 +296,7 @@ def freeze(request: Request, frozen: bool = True, account: str = Query(paper.DEF
     return {"account": acc}
 
 
-@router.post("/settings")
+@router.post("/settings", response_model=contracts.PaperAccountResponse)
 def update_settings(request: Request, body: SettingsModel, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     """更新账户设置 (涨跌停排队等开关)。"""
     try:
@@ -318,13 +319,13 @@ class AutoRuleModel(BaseModel):
     enabled: bool = True
 
 
-@router.get("/auto_rules")
+@router.get("/auto_rules", response_model=contracts.PaperAutoRulesResponse)
 def list_auto_rules(request: Request, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     from app.strategy import paper_auto
     return {"rules": paper_auto.load_auto_rules(_data_dir(request), _acc(request, account))}
 
 
-@router.post("/auto_rules")
+@router.post("/auto_rules", response_model=contracts.PaperAutoRuleResponse)
 def create_auto_rule(request: Request, body: AutoRuleModel, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     from app.strategy import paper_auto
     try:
@@ -334,7 +335,10 @@ def create_auto_rule(request: Request, body: AutoRuleModel, account: str = Query
     return {"rule": rule}
 
 
-@router.post("/auto_rules/{rule_id}/enabled")
+@router.post(
+    "/auto_rules/{rule_id}/enabled",
+    response_model=contracts.PaperAutoRuleResponse,
+)
 def set_auto_rule_enabled(request: Request, rule_id: str, enabled: bool, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     from app.strategy import paper_auto
     rule = paper_auto.set_enabled(_data_dir(request), rule_id, enabled, _acc(request, account))
@@ -343,7 +347,7 @@ def set_auto_rule_enabled(request: Request, rule_id: str, enabled: bool, account
     return {"rule": rule}
 
 
-@router.delete("/auto_rules/{rule_id}")
+@router.delete("/auto_rules/{rule_id}", response_model=contracts.OkResponse)
 def delete_auto_rule(request: Request, rule_id: str, account: str = Query(paper.DEFAULT_ACCOUNT_ID)):
     from app.strategy import paper_auto
     if not paper_auto.delete_auto_rule(_data_dir(request), rule_id, _acc(request, account)):
@@ -373,7 +377,7 @@ class ArenaBatchModel(BaseModel):
     queue_limit_orders: bool = False
 
 
-@router.post("/arena/batch_create")
+@router.post("/arena/batch_create", response_model=contracts.PaperArenaResponse)
 def arena_batch_create(request: Request, body: ArenaBatchModel):
     """对比批量创建: 同本金/同费率一次性开 N 个账户, 各绑一条自动跟单规则。
 

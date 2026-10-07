@@ -12,6 +12,7 @@ from typing import Annotated, Any
 import polars as pl
 from fastapi import APIRouter, Query, Request
 
+from app.api import contracts
 from app.services import regime_builder
 
 router = APIRouter(prefix="/api/regime", tags=["regime"])
@@ -46,7 +47,7 @@ def _df_to_records(df) -> list[dict]:
     return records
 
 
-@router.get("/history")
+@router.get("/history", response_model=contracts.RegimeHistoryResponse)
 def regime_history(
     request: Request,
     start: date | None = Query(None),
@@ -94,7 +95,7 @@ def pl_col_date(df, op: str, value: date):
     return col >= value if op == ">=" else col <= value
 
 
-@router.get("/latest")
+@router.get("/latest", response_model=contracts.RegimeLatestResponse)
 def regime_latest(request: Request):
     """最新一日环境(轻量)。"""
     df = regime_builder.load_regime_history(_data_dir(request))
@@ -105,7 +106,7 @@ def regime_latest(request: Request):
     return {"row": rows[0] if rows else None}
 
 
-@router.get("/states")
+@router.get("/states", response_model=contracts.RegimeStatesResponse)
 def regime_states(
     request: Request,
     days: int = Query(60, ge=1, le=1000),
@@ -129,7 +130,7 @@ def regime_states(
     return {"distribution": distribution, "days": total}
 
 
-@router.get("/coverage")
+@router.get("/coverage", response_model=contracts.RegimeCoverageResponse)
 def regime_coverage(request: Request):
     """regime 数据覆盖元信息(供数据画像)。"""
     return regime_builder.get_regime_coverage(_data_dir(request))
@@ -179,7 +180,7 @@ def regime_recompute(request: Request, start: date | None = None, end: date | No
     }
 
 
-@router.get("/phases")
+@router.get("/phases", response_model=contracts.RegimePhasesResponse)
 def regime_phases(
     request: Request,
     start: date | None = None,
@@ -311,7 +312,7 @@ def mainline_recompute(request: Request):
     return {"ok": True, "rows": rows}
 
 
-@router.get("/mainline")
+@router.get("/mainline", response_model=contracts.RegimeMainlineResponse)
 def regime_mainline(
     request: Request,
     start: date | None = None,

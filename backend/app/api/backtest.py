@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api import contracts
 from app.config import settings
 from app.services.backtest import (
     BacktestConfig,
@@ -87,7 +88,7 @@ def _guard_server_backtest_range(start: date, end: date):
 # 状态
 # ================================================================
 
-@router.get("/status")
+@router.get("/status", response_model=contracts.BacktestStatusResponse)
 def status():
     """前端可用此接口判断回测页是否要灰显。"""
     return {"available": True}
@@ -111,7 +112,7 @@ class BacktestRequest(BaseModel):
     asset_type: str = "stock"
 
 
-@router.post("/run")
+@router.post("/run", response_model=contracts.SignalBacktestResponse)
 def run(req: BacktestRequest, request: Request):
     """信号回测 — 现有接口，向后兼容。"""
     repo = request.app.state.repo
@@ -143,11 +144,7 @@ def run(req: BacktestRequest, request: Request):
 # 因子回测
 # ================================================================
 
-class FactorColumnsResponse(BaseModel):
-    columns: list[dict]
-
-
-@router.get("/factor/columns")
+@router.get("/factor/columns", response_model=contracts.FactorColumnsResponse)
 def factor_columns():
     """返回可用的因子列列表 (含运行期注册的自定义/复合因子)。"""
     from app.factors.registry import factor_columns_view
@@ -167,7 +164,7 @@ class FactorBacktestRequest(BaseModel):
     asset_type: str = "stock"
 
 
-@router.post("/factor/run")
+@router.post("/factor/run", response_model=contracts.FactorBacktestResponse)
 def factor_run(req: FactorBacktestRequest, request: Request):
     """因子回测 — IC/IR 分析 + 分层回测。"""
     from app.backtest.factor import FactorBacktestService, FactorConfig
@@ -220,7 +217,7 @@ class FactorBatchRequest(BaseModel):
     asset_type: str = "stock"
 
 
-@router.post("/factor/batch")
+@router.post("/factor/batch", response_model=contracts.FactorBatchResponse)
 def factor_batch(req: FactorBatchRequest, request: Request):
     """批量筛选因子, 同一批次只加载并计算一次数据面板。"""
     from app.backtest.factor import (
@@ -295,7 +292,7 @@ def _raise_candidate_error(exc: Exception) -> None:
     raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
-@router.get("/candidates")
+@router.get("/candidates", response_model=contracts.CandidatesResponse)
 def candidates_list():
     try:
         return {"items": _candidate_store().list()}
@@ -399,7 +396,7 @@ def _guard_minute_strategy_backtest(
         )
 
 
-@router.post("/strategy/run")
+@router.post("/strategy/run", response_model=contracts.StrategyBacktestResponse)
 def strategy_run(req: StrategyBacktestRequest, request: Request):
     """策略回测 — 复用 StrategyDef 体系做全周期回测。"""
     from app.backtest.strategy import StrategyBacktestConfig

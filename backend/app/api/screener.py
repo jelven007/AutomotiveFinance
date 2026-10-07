@@ -15,6 +15,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from app.api import contracts
 from app.config import settings
 from app.db_safe import is_valid_ext_ident, quote_ident
 from app.services import strategy_cache, strategy_run_queue
@@ -253,7 +254,7 @@ def _update_cache_strategy(data_dir, as_of: str, strategy_id: str, safe_data: di
         strategy_cache.write_cache(data_dir, as_of, results)
 
 
-@router.get("/strategies")
+@router.get("/strategies", response_model=contracts.ScreenerStrategiesResponse)
 def strategies(
     request: Request,
     asset_type: str = Query("stock"),
@@ -283,7 +284,7 @@ def strategies(
     return {"presets": presets, "load_errors": engine.load_errors()}
 
 
-@router.post("/run")
+@router.post("/run", response_model=contracts.ScreenerResultResponse)
 def run_custom(req: CustomRequest, request: Request):
     repo = request.app.state.repo
     svc = ScreenerService(repo, asset_type=req.asset_type)
@@ -306,7 +307,7 @@ def run_custom(req: CustomRequest, request: Request):
     return _result_with_ext(safe_data, ext_values)
 
 
-@router.post("/run_preset")
+@router.post("/run_preset", response_model=contracts.ScreenerResultResponse)
 def run_preset(req: PresetRequest, request: Request):
     repo = request.app.state.repo
     svc = ScreenerService(repo, asset_type=req.asset_type)
@@ -387,7 +388,7 @@ def _cached_with_realtime(request: Request) -> dict:
     return cached
 
 
-@router.get("/cached")
+@router.get("/cached", response_model=contracts.ScreenerCachedResponse)
 def get_cached(
     request: Request,
     ext_columns: Optional[str] = Query(None, description="逗号分隔: config_id.field_name"),
@@ -504,7 +505,7 @@ def get_cached_result(
     }
 
 
-@router.get("/market-snapshot")
+@router.get("/market-snapshot", response_model=contracts.MarketSnapshotResponse)
 def market_snapshot(request: Request):
     """最新全市场轻量行情快照，供板块/概念聚合分析使用。"""
     import polars as pl
@@ -660,7 +661,7 @@ def _run_all_progressive(
     }
 
 
-@router.post("/run_all")
+@router.post("/run_all", response_model=contracts.ScreenerRunAllResponse)
 def run_all(request: Request, body: Optional[dict] = None):
     """批量运行指定策略；注册、路由和执行均由 StrategyEngine 负责。"""
     from datetime import date as date_type
@@ -804,7 +805,7 @@ def run_all(request: Request, body: Optional[dict] = None):
     return {"as_of": str(as_of), "results": _results_with_ext(results, ext_values)}
 
 
-@router.get("/limit-ladder")
+@router.get("/limit-ladder", response_model=contracts.LimitLadderResponse)
 def limit_ladder(
     request: Request,
     as_of: Optional[date] = None,

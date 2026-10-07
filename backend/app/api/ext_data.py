@@ -16,6 +16,7 @@ import polars as pl
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from app.api import contracts
 from app.market_time import CN_TZ, cn_today
 from app.services.ext_data import (
     ExtConfig,
@@ -393,7 +394,7 @@ def _date_range(config: ExtConfig, data_dir: Path) -> list[str] | None:
     return [dates[0], dates[-1]]
 
 
-@router.get("")
+@router.get("", response_model=contracts.ExtDataListResponse)
 def list_configs(request: Request):
     """列出所有扩展数据配置。"""
     configs = _store(request).load_all()
@@ -523,7 +524,7 @@ def _apply_row_sort(df: pl.DataFrame, sort: str | None) -> pl.DataFrame:
 _ROW_FILTER_QUERY = Query(None, description="过滤 条件`字段:值1|值2`, 可重复多条 (AND)")
 
 
-@router.get("/{config_id}/rows")
+@router.get("/{config_id}/rows", response_model=contracts.ExtDataRowsResponse)
 def list_rows(
     request: Request,
     config_id: str,
@@ -581,7 +582,7 @@ def list_rows(
     }
 
 
-@router.get("/{config_id}/values")
+@router.get("/{config_id}/values", response_model=contracts.ExtDataValuesResponse)
 def field_values(
     request: Request,
     config_id: str,
@@ -621,7 +622,10 @@ def field_values(
     }
 
 
-@router.get("/{config_id}/dimension-members")
+@router.get(
+    "/{config_id}/dimension-members",
+    response_model=contracts.DimensionMembersResponse,
+)
 def dimension_members(
     request: Request,
     config_id: str,
@@ -851,7 +855,10 @@ def _dimension_intraday_compute(
     }
 
 
-@router.get("/{config_id}/dimension-intraday")
+@router.get(
+    "/{config_id}/dimension-intraday",
+    response_model=contracts.DimensionIntradayResponse,
+)
 def dimension_intraday(
     request: Request,
     config_id: str,
@@ -973,7 +980,7 @@ async def upload_data(
 # JSON 接口写入
 # ---------------------------------------------------------------------------
 
-@router.post("/{config_id}/ingest")
+@router.post("/{config_id}/ingest", response_model=contracts.ExtDataIngestResponse)
 def ingest_data(request: Request, config_id: str, body: IngestReq):
     """通过 JSON 接口批量写入扩展数据。"""
     store = _store(request)
@@ -1336,7 +1343,7 @@ async def detect_url(body: DetectUrlReq):
     }
 
 
-@router.get("/schema/{config_id}")
+@router.get("/schema/{config_id}", response_model=contracts.ExtDataSchemaResponse)
 def discover_schema(request: Request, config_id: str):
     """发现扩展数据的实际 Parquet schema（基于已有数据）。"""
     config = _store(request).get(config_id)
@@ -1357,7 +1364,7 @@ def discover_schema(request: Request, config_id: str):
         return {"columns": [f.to_dict() for f in config.fields]}
 
 
-@router.get("/schema-all")
+@router.get("/schema-all", response_model=contracts.ExtDataSchemasResponse)
 def discover_all_schemas(request: Request):
     """发现所有扩展表的 schema（用于前端动态列选择）。"""
     configs = _store(request).load_all()

@@ -111,6 +111,10 @@ pywebview 打开界面。桌面安装包与 Docker 镜像是不同发布产物�
 API 层不应直接实现供应商协议或全量数据计算。前端不应复制后端能力注册表和金融
 计算口径。
 
+前端领域 API 仍统一由 `frontend/src/lib/api.ts` 导出；通用 Fetch、超时、错误
+解析和 Toast 策略下沉到 `frontend/src/lib/api/client.ts`。领域入口保持稳定，
+避免页面直接复制传输层逻辑。
+
 ## 6. 核心数据流
 
 ### 6.1 数据同步与发布
@@ -276,9 +280,15 @@ queued -> running -> succeeded / failed
 - 面板会话：用于浏览器登录和 UI。
 - API Token：用于开放接口，按 scope 授权。
 
-Tier A 开放端点由契约快照测试保护。MCP 服务器作为独立包调用开放 API，不直接
-读取本地文件。AI 助手的写动作必须经过短期确认流程；重启导致确认状态丢失时，应
-视为未执行。
+Tier A 的 65 个开放端点使用显式成功响应契约。普通 JSON 响应通过
+`backend/app/api/contracts.py` 中的 Pydantic `response_model` 校验；SSE 显式
+声明 `text/event-stream` schema。稳定字段被写入 OpenAPI，未冻结的扩展字段继续
+允许透传，模型缺省值不会凭空扩张旧响应。
+
+契约测试同时冻结方法/路径集合和 Tier A 可达请求、响应 schema 的 SHA-256 指纹。
+新增、删除或修改 schema 都必须先判断兼容性，再有意识地更新快照；不能用宽泛
+`dict` 响应绕过门禁。MCP 服务器作为独立包调用开放 API，不直接读取本地文件。
+AI 助手的写动作必须经过短期确认流程；重启导致确认状态丢失时，应视为未执行。
 
 公网部署必须在应用认证之外配置 HTTPS、网络访问控制和凭据管理。当前仓库不提供
 完整的 WAF、集中审计或多租户隔离。

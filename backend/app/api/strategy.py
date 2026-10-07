@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api import contracts
 from app.backtest.minute_trigger import MINUTE_EXIT_TRIGGER_SIGNALS
 from app.strategy import config as strategy_config
 from app.strategy.ai_generator import AIStrategyGenerator, find_meta_assignment
@@ -314,7 +315,7 @@ class MonitorStartRequest(BaseModel):
 # ── 列表 / 详情 ─────────────────────────────────────────────────────
 
 
-@router.get("")
+@router.get("", response_model=contracts.StrategiesResponse)
 def list_strategies(
     request: Request,
     asset_type: str | None = None,
@@ -342,7 +343,7 @@ def list_strategies(
     return {"strategies": result, "load_errors": engine.load_errors()}
 
 
-@router.get("/{strategy_id}")
+@router.get("/{strategy_id}", response_model=contracts.StrategyDetailResponse)
 def get_strategy(strategy_id: str, request: Request):
     engine = _get_engine(request)
     s = _get_public_strategy(engine, strategy_id)
@@ -821,7 +822,7 @@ def _save_strategy_code(req: StrategyCodeSaveRequest, request: Request, *, legac
     }
 
 
-@router.get("/ai/status")
+@router.get("/ai/status", response_model=contracts.AiStatusResponse)
 def ai_status(request: Request):
     """Check whether the selected AI provider is configured."""
     from app import secrets_store
@@ -838,7 +839,7 @@ def ai_status(request: Request):
     }
 
 
-@router.get("/{strategy_id}/source")
+@router.get("/{strategy_id}/source", response_model=contracts.StrategySourceResponse)
 def get_strategy_source(strategy_id: str, request: Request):
     """获取策略源文件内容（用于 AI 修改）"""
 

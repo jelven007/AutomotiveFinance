@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
+from app.api import contracts
 from app.indicators.pipeline import compute_enriched, compute_enriched_single
 from app.market_time import cn_now, cn_today, in_continuous_session
 from app.price_limits import is_no_limit_day, is_risk_warning_name, parse_listing_date, price_limit_pct
@@ -138,7 +139,7 @@ def _match_pinyin(name: str, keyword: str) -> bool:
     return any(k.startswith(keyword) for k in _name_pinyin_keys(name))
 
 
-@router.get("/instruments/search")
+@router.get("/instruments/search", response_model=contracts.InstrumentSearchResponse)
 def search_instruments(
     request: Request,
     q: str = Query("", min_length=0, max_length=50, description="搜索关键词"),
@@ -387,7 +388,7 @@ def _get_previous_closes(
     return result
 
 
-@router.get("/daily")
+@router.get("/daily", response_model=contracts.DailyKlineResponse)
 def get_daily(
     request: Request,
     symbol: str = Query(..., description="标的代码,如 000001.SZ"),
@@ -597,7 +598,7 @@ def _maybe_inject_live_candle(request: Request, symbol: str, rows: list[dict], a
     return rows
 
 
-@router.get("/daily/latest")
+@router.get("/daily/latest", response_model=contracts.DailyKlineLatestResponse)
 def get_daily_latest(
     request: Request,
     symbol: str = Query(..., description="标的代码,如 000001.SZ"),
@@ -924,7 +925,7 @@ def get_minute_batch(request: Request, body: dict):
     )
 
 
-@router.get("/minute-range")
+@router.get("/minute-range", response_model=contracts.MinuteRangeResponse)
 def get_minute_range(
     request: Request,
     symbol: str = Query(..., description="标的代码"),
@@ -1003,7 +1004,7 @@ def get_minute_range(
     )
 
 
-@router.get("/minute")
+@router.get("/minute", response_model=contracts.MinuteKlineResponse)
 def get_minute(
     request: Request,
     symbol: str = Query(..., description="标的代码"),

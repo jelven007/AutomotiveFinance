@@ -10,6 +10,7 @@ from typing import Optional
 import polars as pl
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from app.api import contracts
 from app.indicators.pipeline import compute_enriched
 from app.market_time import cn_today
 from app.services import index_sync, kline_sync, preferences, trading_day
@@ -37,7 +38,7 @@ def _index_info(repo, symbol: str) -> dict:
 
 
 
-@router.get("/daily")
+@router.get("/daily", response_model=contracts.IndexDailyResponse)
 def get_index_daily(
     request: Request,
     symbol: str = Query(..., description="指数代码, 如 000001.SH"),
@@ -75,7 +76,7 @@ def get_index_daily(
     return {"symbol": symbol, "name": info.get("name"), "index_info": info, "rows": rows, "source": "live"}
 
 
-@router.get("/minute")
+@router.get("/minute", response_model=contracts.IndexMinuteResponse)
 def get_index_minute(
     request: Request,
     symbol: str = Query(..., description="指数代码, 如 000001.SH"),

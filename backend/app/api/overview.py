@@ -11,6 +11,7 @@ from typing import Any
 import polars as pl
 from fastapi import APIRouter, Request
 
+from app.api import contracts
 from app.services.ext_data import ExtConfig, ExtConfigStore
 from app.services.index_const import CORE_INDEX_NAMES, CORE_INDEX_SYMBOLS
 from app.services.screener import ScreenerService
@@ -355,7 +356,7 @@ def _build_overview(request: Request, as_of: date | None = None) -> dict:
     )
 
 
-@router.get("/market")
+@router.get("/market", response_model=contracts.MarketOverviewResponse)
 def market_overview(request: Request, as_of: date | None = None):
     """总览页单次请求聚合数据，避免前端拉全市场明细后再计算。"""
     global _cache, _cache_key, _cache_ts

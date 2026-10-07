@@ -9,6 +9,12 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
+from collections import deque
+from copy import deepcopy
+from typing import Any
+
 import pytest
 
 from app.services import api_gateway
@@ -83,6 +89,9 @@ EXPECTED_OPEN_ENDPOINTS: set[str] = {
     "GET /api/strategies/{strategy_id}/source",
 }
 
+EXPECTED_TIER_A_SCHEMA_SHA256 = "462928db77217143c3a429eeb3c1fb6c2d76c1cbdf1b8b7ba742775ea3dfd469"
+_HTTP_METHODS = {"get", "post", "put", "delete", "patch"}
+
 
 def _collect_open_endpoints() -> set[str]:
     """与 /api/openapi.json?tier=a 同源收集 (app.openapi paths 过 required_scope)。"""
@@ -99,6 +108,62 @@ def _collect_open_endpoints() -> set[str]:
     return found
 
 
+def _tier_a_contract() -> dict[str, Any]:
+    """Return Tier A paths plus only the components reachable from those paths."""
+    from app.main import app
+
+    spec = app.openapi()
+    paths: dict[str, dict] = {}
+    for path, operations in spec.get("paths", {}).items():
+        kept = {
+            method: deepcopy(operation)
+            for method, operation in operations.items()
+            if method in _HTTP_METHODS and api_gateway.required_scope(method.upper(), path)
+        }
+        if kept:
+            paths[path] = kept
+
+    components = spec.get("components", {})
+    found: dict[str, set[str]] = {}
+    queued: set[str] = set()
+    refs: deque[str] = deque()
+
+    def collect_refs(value: Any) -> None:
+        if isinstance(value, dict):
+            ref = value.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/components/") and ref not in queued:
+                queued.add(ref)
+                refs.append(ref)
+            for child in value.values():
+                collect_refs(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect_refs(child)
+
+    collect_refs(paths)
+    while refs:
+        ref = refs.popleft()
+        parts = ref.split("/", 3)
+        if len(parts) != 4:
+            continue
+        _, _, group, name = parts
+        item = components.get(group, {}).get(name)
+        if item is None:
+            continue
+        found.setdefault(group, set()).add(name)
+        collect_refs(item)
+
+    reachable_components = {
+        group: {name: deepcopy(components[group][name]) for name in sorted(names)}
+        for group, names in sorted(found.items())
+    }
+    return {
+        "openapi": spec.get("openapi"),
+        "paths": paths,
+        "components": reachable_components,
+    }
+
+
 def test_open_contract_snapshot():
     found = _collect_open_endpoints()
     added = found - EXPECTED_OPEN_ENDPOINTS
@@ -110,3 +175,38 @@ def test_open_contract_snapshot():
             f"  移除: {sorted(removed) or '无'}\n"
             "确认无误后, 同步更新本文件的 EXPECTED_OPEN_ENDPOINTS 并在 commit 中说明。",
         )
+
+
+def test_open_contract_success_responses_have_schemas():
+    contract = _tier_a_contract()
+    missing: list[str] = []
+    invalid_sse: list[str] = []
+    for path, operations in contract["paths"].items():
+        for method, operation in operations.items():
+            success = operation.get("responses", {}).get("200", {})
+            content = success.get("content", {})
+            schemas = [
+                media.get("schema")
+                for media in content.values()
+                if media.get("schema")
+            ]
+            if not schemas:
+                missing.append(f"{method.upper()} {path}")
+            if path == "/api/events" and set(content) != {"text/event-stream"}:
+                invalid_sse.append(f"{method.upper()} {path}: {sorted(content)}")
+    assert not missing, f"Tier A 成功响应缺少 schema: {missing}"
+    assert not invalid_sse, f"SSE 成功响应媒体类型错误: {invalid_sse}"
+
+
+def test_open_contract_schema_fingerprint():
+    payload = json.dumps(
+        _tier_a_contract(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    actual = hashlib.sha256(payload).hexdigest()
+    assert actual == EXPECTED_TIER_A_SCHEMA_SHA256, (
+        "Tier A OpenAPI 请求或响应 schema 发生变化。确认兼容性并同步文档后, "
+        f"将 EXPECTED_TIER_A_SCHEMA_SHA256 更新为 {actual}"
+    )

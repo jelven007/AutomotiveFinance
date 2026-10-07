@@ -16,6 +16,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.api import contracts
 from app.services import event_tickets
 from app.services.events import bus, sse_format
 
@@ -25,7 +26,7 @@ _HEARTBEAT_S = 15.0
 _POLL_S = 0.5
 
 
-@router.post("/ticket")
+@router.post("/ticket", response_model=contracts.EventTicketResponse)
 def issue_ticket(request: Request):
     """Bearer Token (任意 scope) → 一次性 SSE 票据。"""
     # 认证与限流已在网关中间件完成 (scope 规则 "*"); 端点内再验一次
@@ -45,7 +46,16 @@ def issue_ticket(request: Request):
     return {"ticket": ticket, "expires_in": int(ttl), "stream": "/api/events?ticket=" + ticket}
 
 
-@router.get("")
+@router.get(
+    "",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Server-Sent Events stream",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+    },
+)
 async def event_stream(ticket: str = ""):
     """SSE 事件流; 票据一次性, 重连需 POST /ticket 换新。"""
     scopes = event_tickets.consume(ticket) if ticket else None

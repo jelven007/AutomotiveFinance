@@ -4,26 +4,13 @@
 // Prod:同源(FastAPI 托管前端 dist)
 
 import { toast } from '@/components/Toast'
+import {
+  COMPUTE_REQUEST_TIMEOUT_MS,
+  extPullTimeoutMs,
+  request,
+} from '@/lib/api/client'
 
-const BASE = ''
-
-type RequestOptions = RequestInit & {
-  /** 为 true 时不弹错误 toast（由调用方自行汇总提示，如多图串行队列） */
-  quiet?: boolean
-  /** 请求超时毫秒数; null 关闭。默认 30s — 后端依赖 polars, 偶发挂起时无超时
-   *  会占满浏览器同源连接池, 拖垮整页所有请求 (表现为全部排队"已停止")。 */
-  timeoutMs?: number | null
-}
-
-export class ApiError extends Error {
-  readonly status: number
-
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = 'ApiError'
-    this.status = status
-  }
-}
+export { ApiError } from '@/lib/api/client'
 
 /**
  * 把浏览器 fetch 抛出的裸网络错误文案翻译成可操作的提示。
@@ -36,65 +23,6 @@ export function friendlyStreamError(message: string | undefined | null): string 
     return '网络连接中断: 通常是 AI 服务繁忙, 或代理/网关超时切断了长连接, 请重试'
   }
   return message
-}
-
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
-/** 同步计算型接口 (回测/筛选等) 的放宽超时: 合法耗时可能远超轮询类接口。 */
-const COMPUTE_REQUEST_TIMEOUT_MS = 300_000
-/** 扩展数据拉取类长请求: 跟随后端配置的单次超时 (timeoutSeconds, 默认 30s) + 10s 解析/写盘缓冲。
- *  浏览器端 fetch 默认 30s abort 会先于后端超时触发, 大响应接口 (如全量集合竞价
- *  /day, 后端超时 120s) 必须把这层同步放宽。 */
-const extPullTimeoutMs = (timeoutSeconds?: number) => (timeoutSeconds ?? 30) * 1000 + 10_000
-
-async function request<T>(path: string, init?: RequestOptions): Promise<T> {
-  const { quiet, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init ?? {}
-  const isFormData = fetchInit.body instanceof FormData
-  const headers: Record<string, string> = {}
-  if (!isFormData) headers['Content-Type'] = 'application/json'
-  // 合并调用方传入的 headers (此前会被整体覆盖丢弃)
-  Object.assign(headers, fetchInit.headers as Record<string, string> | undefined)
-  // 自带 signal 的调用方 (上传/串行队列) 由其自行控制中止; 其余走默认超时。
-  const ctl = timeoutMs == null || fetchInit.signal ? undefined : new AbortController()
-  const timeoutSeconds = Math.round((timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) / 1000)
-  let timer: number | undefined
-  if (ctl && timeoutMs != null) timer = window.setTimeout(() => ctl.abort(), timeoutMs)
-  let res: Response
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      ...fetchInit,
-      headers,
-      ...(ctl ? { signal: ctl.signal } : {}),
-    })
-  } catch (err) {
-    if (ctl && err instanceof DOMException && err.name === 'AbortError') {
-      const msg = `请求超时（${timeoutSeconds}s）· ${path.split('?')[0]}`
-      if (!quiet) toast(msg, 'error')
-      throw new ApiError(msg, 0)
-    }
-    throw err
-  } finally {
-    if (timer !== undefined) window.clearTimeout(timer)
-  }
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const j = JSON.parse(await res.text())
-      const raw = j.detail ?? j.message ?? ''
-      if (Array.isArray(raw)) {
-        // FastAPI 422 校验错误: [{type, loc, msg, input}, ...] → 取 msg 拼接
-        detail = raw.map((e: any) => e?.msg || String(e)).join('; ')
-      } else if (typeof raw === 'string') {
-        detail = raw
-      } else if (raw && typeof raw === 'object') {
-        detail = JSON.stringify(raw)
-      }
-    } catch { /* ignore */ }
-    const msg = detail || `${res.status} ${res.statusText}`
-    // 401 (未登录/会话过期) 不弹 toast — 由全局认证拦截器统一跳登录页, 避免刷屏
-    if (res.status !== 401 && !quiet) toast(msg, 'error')
-    throw new ApiError(msg, res.status)
-  }
-  return res.json() as Promise<T>
 }
 
 // ===== Capabilities =====

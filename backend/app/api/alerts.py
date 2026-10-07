@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from app.api import contracts
 from app.services import alert_store
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -16,7 +17,7 @@ def _data_dir(request: Request) -> Path:
     return request.app.state.repo.store.data_dir
 
 
-@router.get("")
+@router.get("", response_model=contracts.AlertsResponse)
 def list_alerts(
     request: Request,
     # 上限取存储侧保留策略 (alert_store.MAX_DAYS / MAX_RECORDS): 超出也没有可返回的记录。
@@ -155,4 +156,3 @@ def seed_demo_alerts(request: Request, count: int = 12, recent: bool = True):
         qs.push_alerts(sse_alerts)
 
     return {"ok": True, "generated": len(events)}
-
