@@ -1,6 +1,6 @@
 name: CI
 
-# 持续集成: 后端全量测试 + 前端构建。
+# 持续集成: 后端全量测试 + 前端全量测试与构建。
 # 与 release.yml 的分工: 这里不打包, 只守质量门 —
 # 后端含 Tier A 开放契约快照测试 (test_openapi_contract.py),
 # 开放面的任何变化都会在这里被拦下, 须有意识地更新快照。
@@ -59,6 +59,12 @@ jobs:
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
+
+      - name: 前端全量测试
+        run: pnpm test
+
+      - name: 前端静态检查
+        run: pnpm lint
 
       - name: 构建 (tsc + vite)
         run: pnpm build
