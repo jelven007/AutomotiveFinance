@@ -75,6 +75,10 @@ AI_DAILY_TOKEN_BUDGET=500000           # 每日 token 预算上限
 | `AI_MODEL` | 模型名,如 `deepseek-chat` |
 | `AI_DAILY_TOKEN_BUDGET` | 每日 token 预算,超限后当日不再调用 |
 
+页面预设包括自定义、RunningHub、OpenAI、DeepSeek、GLM 和 Codex CLI。
+通义千问与 Kimi 不再单列预设；已有其他 OpenAI 兼容配置会显示为“自定义”，
+其地址、模型和密钥仍按原配置使用。
+
 接入示例见 [strategy.md](./strategy.md) 的「AI 生成策略」章节。
 
 ---

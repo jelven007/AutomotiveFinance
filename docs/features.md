@@ -190,7 +190,17 @@ fuyao 仅提供可选的盘前风向标与收益对照，未配置时不影响�
 (日K / 除权因子 / 实时行情 / 分钟K / 五档盘口 / 财务 / 全量分钟)
 分别独立选源，缺能力时明确失败，不会静默跨源补齐。
 
+设置页内置展示 TickFlow、mootdx 和 fuyao；stock-sdk 插件及其构建入口已删除。
+能力路由按单项标签即时切换，不提供整组“恢复默认”；数据源卡片下方的“说明”
+解释高亮、已适配和档位锁定状态，“套用”仍可让一个源接管其支持的全部能力。
+
 详见 [custom-data-source.md](./custom-data-source.md) 与 [plugin-development.md](./plugin-development.md)。
+
+### AI 服务配置
+
+AI 设置提供自定义、RunningHub、OpenAI、DeepSeek、GLM 和 Codex CLI 预设；
+通义千问与 Kimi 不再作为独立预设。已保存的其他 OpenAI 兼容地址仍按“自定义”
+配置读取，不会因预设精简而丢失。
 
 ### 全量分钟(盘中增量落盘)
 
