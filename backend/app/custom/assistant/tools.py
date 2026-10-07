@@ -721,8 +721,12 @@ def _invalidate_custom_signals(data_dir: Path, repo: Any) -> None:
     custom_signals.invalidate_intraday_cache()
     invalidate_custom_signals()
     strategy_cache.clear_cache(data_dir)
-    if repo is not None and hasattr(repo, "clear_cache"):
-        repo.clear_cache()
+    if repo is not None:
+        invalidate = getattr(repo, "invalidate_computed_caches", None)
+        if callable(invalidate):
+            invalidate()
+        elif hasattr(repo, "clear_cache"):
+            repo.clear_cache()
 
 
 _SIGNAL_FIELD_HINT = (

@@ -536,6 +536,25 @@ class KlineRepository:
         导致内存里的旧缓存残留 (clear 数据后看板仍显示旧数据的根因)。
         本方法无条件清空, 供清除数据/重置场景调用。
         """
+        self.invalidate_computed_caches()
+        self._instruments_cache = None
+        self._historical_shares_cache = None
+        self._historical_shares_mtime_ns = None
+        self._instrument_history_cache = None
+        self._instrument_history_mtime_ns = None
+        self._index_instruments_cache = None
+        self._etf_instruments_cache = None
+        self._index_symbol_set_cache = None
+        self._etf_symbol_set_cache = None
+        self._name_map_cache = None
+
+    def invalidate_computed_caches(self) -> None:
+        """失效依赖配置/扩展数据的计算缓存, 保留行情计算依赖。
+
+        扩展表和自定义信号变更只会改变 enriched 派生列。保留 instruments
+        等维表可避免首个懒加载请求在依赖尚未恢复时计算出缺少涨跌停信号的
+        半成品缓存。原始数据清理仍应使用 ``clear_cache``。
+        """
         self._enriched_cache = None
         self._enriched_cache_date = None
         self._enriched_history_cache = None
@@ -544,20 +563,10 @@ class KlineRepository:
         self._live_agg_cache = None
         self._live_agg_cache_date = None
         self._live_agg_check_date = None
-        self._instruments_cache = None
-        self._historical_shares_cache = None
-        self._historical_shares_mtime_ns = None
-        self._instrument_history_cache = None
-        self._instrument_history_mtime_ns = None
-        self._index_instruments_cache = None
         self._etf_enriched_cache = None
         self._etf_enriched_cache_date = None
         self._etf_live_agg_cache = None
         self._etf_live_agg_cache_date = None
-        self._etf_instruments_cache = None
-        self._index_symbol_set_cache = None
-        self._etf_symbol_set_cache = None
-        self._name_map_cache = None
         self._index_enriched_cache = None
         self._index_enriched_cache_date = None
 
@@ -577,6 +586,12 @@ class KlineRepository:
         """
         try:
             started = time.perf_counter()
+            # _refresh_enriched 也可由缓存冷启动的首个请求直接触发, 不能假设
+            # refresh_cache 已先加载维表。缺少 instruments 会让涨跌停/连板列
+            # 静默缺失, 并把半成品缓存发布给看板和选股器。
+            if self._instruments_cache is None:
+                logger.info("enriched refresh dependency cold: loading instruments")
+                self._refresh_instruments()
             refresh_generation = self.get_matrix_data_generation("stock")
             logger.info("enriched refresh start")
 

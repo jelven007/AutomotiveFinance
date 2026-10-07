@@ -33,7 +33,10 @@ def _invalidate(request: Request) -> None:
     from app.services import strategy_cache
     strategy_cache.clear_cache(_data_dir(request))
     repo = request.app.state.repo
-    if hasattr(repo, "clear_cache"):
+    invalidate = getattr(repo, "invalidate_computed_caches", None)
+    if callable(invalidate):
+        invalidate()
+    elif hasattr(repo, "clear_cache"):
         repo.clear_cache()
 
 
