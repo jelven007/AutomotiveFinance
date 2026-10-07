@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import date as _date, datetime as _dt, timedelta as _td
 from pathlib import Path
 
 import polars as pl
@@ -227,7 +228,6 @@ def run_now(
     #   付费档 + 今天有数据 → 实时行情接口拉一次覆写（1请求全市场）
     #   有历史数据 → batch K-line API 补齐缺口
     #   无任何数据 → batch K-line API 拉首次 1 年
-    from datetime import date as _date, timedelta as _td, datetime as _dt
     latest_daily = repo.latest_daily_date()
     # 管道「今天」必须是北京日期: 美西主机 15:35 北京时间仍是本地昨天,
     # date.today() 会把昨日日K当成已齐, 当日官方收盘价永远拉不进来。
@@ -900,13 +900,13 @@ def _push_phase_change_alert(data_dir) -> None:
 def _run_tracked(fn, job_label: str) -> bool:
     """调度触发时包装 JobStore 跟踪，确保同步历史有记录。
 
-    单飞: 若已有活跃(pending∨running)任务(手动同步中), 本次调度直接跳过, 不并发。
+    单飞: 若已有活跃任务(手动同步中), 本次调度直接跳过, 不并发。
     重任务执行槽: 再挡一层僵尸并发(reap 后线程仍活时不得并行写 parquet)。
     返回 True 仅表示任务已成功并且执行槽已释放。
     """
     from app.services.pipeline_jobs import JobCancelledError, job_store, release_run_slot, run_with_capacity, try_acquire_run_slot
 
-    job_id, is_new = job_store.create()
+    job_id, is_new = job_store.create(kind=job_label, source="scheduled")
     if not is_new:
         logger.info("scheduled %s 跳过: 已有活跃任务在运行 (job_id=%s)", job_label, job_id)
         return False
@@ -926,7 +926,7 @@ def _run_tracked(fn, job_label: str) -> bool:
         succeeded = True
         logger.info("scheduled %s completed: job_id=%s", job_label, job_id)
     except JobCancelledError:
-        # 已由 terminate() 标记失败(卡死/手动取消), 拉取线程在分块回调处自行退出
+        job_store.cancelled(job_id)
         logger.warning("scheduled %s cancelled: job_id=%s", job_label, job_id)
     except Exception:
         logger.exception("scheduled %s failed: job_id=%s", job_label, job_id)
@@ -1181,13 +1181,28 @@ def _register_review_job(scheduler, repo, hour: int, minute: int) -> None:
     )
 
 
-def _run_auction_snapshot(repo: KlineRepository) -> dict:
-    from app.services.auction_snapshot import capture_auction_snapshot
+def _run_auction_snapshot(
+    repo: KlineRepository,
+    *,
+    notify_on_failure: bool = False,
+) -> dict:
+    from app.services.auction_snapshot import (
+        capture_auction_snapshot,
+        notify_capture_failure,
+    )
 
     result = capture_auction_snapshot(repo.store.data_dir)
     state = result.get("state")
     if state not in {"ready", "already_captured", "market_closed"}:
         logger.warning("09:25 auction snapshot not published: %s", result)
+        if notify_on_failure:
+            app_state = _get_app_state()
+            quote_service = getattr(app_state, "quote_service", None) if app_state else None
+            notify_capture_failure(
+                repo.store.data_dir,
+                result,
+                quote_service=quote_service,
+            )
     return result
 
 
@@ -1197,6 +1212,7 @@ def _register_auction_jobs(scheduler, repo: KlineRepository) -> None:
         scheduler.add_job(
             _run_auction_snapshot,
             args=[repo],
+            kwargs={"notify_on_failure": second == 45},
             trigger=CronTrigger(
                 day_of_week="mon-fri",
                 hour=9,
@@ -1218,6 +1234,13 @@ def _register_auction_jobs(scheduler, repo: KlineRepository) -> None:
         scheduler.add_job(
             _run_auction_snapshot,
             args=[repo],
+            kwargs={
+                "notify_on_failure": (
+                    auction_now.hour,
+                    auction_now.minute,
+                    auction_now.second,
+                ) >= (9, 25, 45)
+            },
             id="auction_snapshot_catchup",
             next_run_time=auction_now,
             replace_existing=True,

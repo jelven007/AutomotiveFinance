@@ -85,6 +85,7 @@ class MiningJobManager:
                     request,
                     data_fingerprint,
                     run_id=run_id,
+                    source=source,
                 )
             except MiningRunValidationError:
                 if run_id is None:

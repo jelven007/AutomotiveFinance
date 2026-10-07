@@ -132,7 +132,7 @@ API 层不应直接实现供应商协议或全量数据计算。前端不应复�
 ### 6.2 enriched 流水线
 
 ```text
-基础日 K + 除权因子 + 维表/历史股本
+基础日 K + 除权因子 + 当前维表 + 证券状态历史/历史股本
   -> 价格与交易日对齐
   -> Polars 向量化指标和信号
   -> enriched Parquet
@@ -141,6 +141,15 @@ API 层不应直接实现供应商协议或全量数据计算。前端不应复�
 
 技术指标、交易所价格限制和历史可见性使用不同字段时，必须在边界显式区分。详细
 单位和复权规则见 `CONTRIBUTING.md`。
+
+当前证券目录仍写入 `instruments/instruments.parquet` 供实时查询；每次成功同步
+同时把名称、ST/风险警示、上市状态和上市日期的变化写入
+`instrument_status/history.parquet`。历史表采用 SCD2，`valid_to` 为开区间终点，
+同日重跑覆盖当日观测，目录中消失的证券写入退市 tombstone。
+
+enriched 分区持久化 `is_risk_warning`、`is_listed` 和
+`instrument_status_known`。回测和矩阵过滤优先使用交易日对应状态；首次启用历史
+采集之前的日期标记为未知，并保留旧版兼容降级，不伪造历史状态。
 
 ### 6.3 策略与回测
 
@@ -184,6 +193,7 @@ API 层不应直接实现供应商协议或全量数据计算。前端不应复�
 `DATA_DIR` 是运行数据根目录，包含：
 
 - Parquet 数据集和 enriched generation。
+- `instrument_status/history.parquet` 证券状态 SCD2 历史。
 - DuckDB 或索引类本地文件。
 - 用户配置、认证、策略、监控、模拟盘和任务记录。
 - 日志、复盘、竞价快照和扩展数据。
@@ -225,6 +235,24 @@ TanStack Query。写操作必须同时考虑：
 
 竞价终态快照当前是 mootdx 专属实现，要求实时行情生效源为 `mootdx`，不应仅凭
 其他 Provider 声明了 `realtime` 就视为可用。
+
+数据管道与因子挖掘的持久任务共享 `services/task_state.py` 状态机：
+
+```text
+queued -> running -> succeeded / failed
+   |         |
+   +----> cancelling -> cancelled
+   |
+   +----> interrupted / skipped_prerequisite
+```
+
+状态转换经过白名单校验。旧数据管道记录中的 `pending` 在读取时映射为 `queued`；
+取消请求先持久化 `cancelling`，只有执行线程确认退出后才发布 `cancelled`；应用
+重启发现的遗留活跃任务标记为 `interrupted`。数据任务额外记录 `kind`、`source`、
+请求摘要和生命周期时间戳。
+
+回测 SSE 的短期重连对象仍是进程内状态，不属于上述持久任务存储；将其持久化需要
+同时设计大结果生命周期和清理策略，不能直接复用小型任务 manifest。
 
 ## 11. API、认证与开放边界
 

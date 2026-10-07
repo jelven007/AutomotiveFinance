@@ -39,7 +39,14 @@ from pathlib import Path
 
 import polars as pl
 
+from app.instrument_history import instrument_status_on
 from app.market_time import CN_TZ, cn_now, cn_today
+from app.price_limits import (
+    is_risk_warning_name,
+)
+from app.price_limits import (
+    price_limit_pct as stock_price_limit_pct,
+)
 from app.services.fs_utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -275,24 +282,38 @@ def sell_fee(qty: int, price: float, commission_pct: float, stamp_tax_pct: float
 
 
 # ── 涨跌停 (纯函数, 金融口径须测试) ─────────────────────
-def limit_pct(symbol: str, asset_type: str) -> float:
-    """涨跌停幅度。V1 简化: ST 未识别 (无名称数据), 基金统一 10%。
-
-    股票: 创业板 300/301 与科创板 688 → 20%; 北交所 43/83/87/92 开头 → 30%; 其余 10%。
-    """
+def limit_pct(
+    symbol: str,
+    asset_type: str,
+    *,
+    trade_date: _date | None = None,
+    is_risk_warning: bool = False,
+) -> float:
+    """Return the applicable limit, including date-aware stock ST rules."""
     if asset_type == "etf":
         return 0.10
-    code = symbol.split(".")[0]
-    if code.startswith(("300", "301", "688")):
-        return 0.20
-    if code.startswith(("43", "83", "87", "92")):
-        return 0.30
-    return 0.10
+    return stock_price_limit_pct(
+        symbol,
+        trade_date or cn_today(),
+        is_risk_warning=is_risk_warning,
+    )
 
 
-def limit_prices(prev_close: float, symbol: str, asset_type: str) -> tuple[float, float]:
+def limit_prices(
+    prev_close: float,
+    symbol: str,
+    asset_type: str,
+    *,
+    trade_date: _date | None = None,
+    is_risk_warning: bool = False,
+) -> tuple[float, float]:
     """(涨停价, 跌停价)。股票 2 位小数, 基金 3 位小数。"""
-    pct = limit_pct(symbol, asset_type)
+    pct = limit_pct(
+        symbol,
+        asset_type,
+        trade_date=trade_date,
+        is_risk_warning=is_risk_warning,
+    )
     digits = 3 if asset_type == "etf" else 2
     return round(prev_close * (1 + pct), digits), round(prev_close * (1 - pct), digits)
 
@@ -615,7 +636,15 @@ def _fill_order(data_dir: Path, order: dict, raw_price: float, day: str, account
     # 涨跌停检查 (基于上一交易日 raw close; 无上日收盘则跳过检查 — 新股/数据缺失)
     prev = _prev_close(data_dir, symbol, asset_type, day)
     if prev is not None:
-        up, down = limit_prices(prev, symbol, asset_type)
+        trade_date = _date.fromisoformat(day)
+        is_risk_warning = _risk_warning_on(data_dir, symbol, trade_date)
+        up, down = limit_prices(
+            prev,
+            symbol,
+            asset_type,
+            trade_date=trade_date,
+            is_risk_warning=is_risk_warning,
+        )
         if side == "buy" and price >= up:
             _queue_or_expire(data_dir, order, acc, f"触及涨停 {up} 买不进 (模拟)", account_id)
             return None
@@ -713,6 +742,31 @@ def _fill_order(data_dir: Path, order: dict, raw_price: float, day: str, account
 
     logger.info("paper filled: %s %s %d x %.3f fee %.2f", side, symbol, qty, price, fee)
     return fill
+
+
+def _risk_warning_on(data_dir: Path, symbol: str, day: _date) -> bool:
+    if day <= cn_today():
+        status = instrument_status_on(data_dir, symbol, day)
+        if status is not None:
+            return bool(status["is_risk_warning"])
+    if day != cn_today():
+        return False
+    path = data_dir / "instruments" / "instruments.parquet"
+    if not path.exists():
+        return False
+    try:
+        row = (
+            pl.scan_parquet(path)
+            .filter(pl.col("symbol") == symbol)
+            .select("name")
+            .collect()
+        )
+    except Exception as exc:
+        logger.warning("paper instrument status read failed %s: %s", symbol, exc)
+        return False
+    if row.is_empty():
+        return False
+    return is_risk_warning_name(row["name"][0])
 
 
 def _expire(data_dir: Path, order: dict, reason: str, account_id: str = DEFAULT_ACCOUNT_ID) -> None:

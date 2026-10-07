@@ -62,12 +62,16 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
   const statusMap = {
     running:   { icon: Loader2,     color: 'text-accent',   label: '运行中', spinning: true,  border: 'border-accent/40', bg: 'bg-accent/5' },
     pending:   { icon: Loader2,     color: 'text-muted',    label: '排队中', spinning: true,  border: 'border-border',    bg: 'bg-surface' },
+    queued:    { icon: Loader2,     color: 'text-muted',    label: '排队中', spinning: true,  border: 'border-border',    bg: 'bg-surface' },
+    cancelling: { icon: Loader2,    color: 'text-danger',   label: '正在取消', spinning: true, border: 'border-danger/40', bg: 'bg-danger/5' },
     succeeded: { icon: CheckCircle2, color: 'text-bear',     label: '完成',   spinning: false, border: 'border-bear/30',   bg: 'bg-bear/5' },
     failed:    { icon: XCircle,     color: 'text-danger',   label: '失败',   spinning: false, border: 'border-danger/40', bg: 'bg-danger/5' },
+    cancelled: { icon: XCircle,     color: 'text-muted',    label: '已取消', spinning: false, border: 'border-border',    bg: 'bg-surface' },
+    interrupted: { icon: XCircle,   color: 'text-danger',   label: '启动中断', spinning: false, border: 'border-danger/40', bg: 'bg-danger/5' },
   } as const
   const meta = statusMap[job.status]
   const Icon = meta.icon
-  const isDone = job.status === 'succeeded' || job.status === 'failed'
+  const isDone = ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(job.status)
   const stageLabel = isDone ? meta.label : (STAGE_LABELS[job.stage] ?? job.stage)
 
   return (
@@ -125,7 +129,7 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
           </div>
         )
       })()}
-      {job.status === 'failed' && job.error && (
+      {(job.status === 'failed' || job.status === 'interrupted') && job.error && (
         <div className="mt-3 rounded-btn border border-danger/40 bg-danger/5 px-3 py-2 text-xs text-danger">
           {job.error}
           {job.error.includes('超时自动取消') && (
@@ -135,6 +139,9 @@ export function ActiveJobCard({ job }: { job: PipelineJob }) {
             </div>
           )}
         </div>
+      )}
+      {job.status === 'cancelled' && job.cancellation_reason && (
+        <div className="mt-3 text-xs text-muted">{job.cancellation_reason}</div>
       )}
     </div>
   )

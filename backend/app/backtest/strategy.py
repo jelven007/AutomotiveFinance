@@ -478,7 +478,7 @@ def _basic_filter_dependencies(config: dict) -> set[str]:
     if any(config.get(key) is not None for key in ("float_cap_min", "float_cap_max")):
         dependencies.add("float_shares")
     if config.get("exclude_st"):
-        dependencies.add("name")
+        dependencies.add("is_risk_warning")
     return dependencies
 
 

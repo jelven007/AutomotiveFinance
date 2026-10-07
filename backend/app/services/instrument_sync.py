@@ -13,6 +13,7 @@ from pathlib import Path
 import polars as pl
 
 from app.data_providers.instrument_status import is_delisted_name, normalize_instrument_name
+from app.instrument_history import update_instrument_history
 from app.market_time import cn_today
 from app.services.fs_utils import atomic_write_parquet
 from app.tickflow.client import get_client
@@ -80,11 +81,18 @@ def _fetch_instruments_via_provider(asset_type: str = "stock") -> list[dict] | N
 def sync_instruments(data_dir: Path) -> int:
     """全量同步标的维表 → data/instruments/instruments.parquet。
 
+    同时维护 ``instrument_status/history.parquet`` 的 SCD2 历史。历史从首次
+    成功同步开始积累，不把当前名称或 ST 状态倒填到更早日期。
+
     返回写入的行数。
     """
+    from app.services import preferences
+
+    source = preferences.get_daily_data_provider()
     all_rows = _fetch_instruments_via_provider()
     if all_rows is None:
         # 未命中非 tickflow provider → 走 tickflow 直连
+        source = "tickflow"
         tf = get_client()
         all_rows = []
         for ex in _EXCHANGES:
@@ -104,10 +112,12 @@ def sync_instruments(data_dir: Path) -> int:
         return 0
 
     df = pl.DataFrame(all_rows)
-    df = df.with_columns(pl.lit(cn_today()).alias("as_of"))
+    as_of = cn_today()
+    df = df.with_columns(pl.lit(as_of).alias("as_of"))
 
     out = data_dir / "instruments" / "instruments.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
+    update_instrument_history(data_dir, df, as_of=as_of, source=source)
     atomic_write_parquet(df, out)
 
     logger.info("instruments synced: %d rows → %s", df.height, out)
@@ -157,6 +167,19 @@ def enrich_names_from_quotes(
         .alias("name"),
     ).drop("_new_name")
 
+    from app.services import preferences
+
+    as_of = (
+        df["as_of"].cast(pl.Date, strict=False).max()
+        if "as_of" in df.columns
+        else cn_today()
+    )
+    update_instrument_history(
+        data_dir,
+        df,
+        as_of=as_of or cn_today(),
+        source=preferences.get_daily_data_provider(),
+    )
     atomic_write_parquet(df, inst_path)
     logger.info("instruments name enriched from quotes: %d names", len(name_map))
     return len(name_map)

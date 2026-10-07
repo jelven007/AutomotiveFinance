@@ -1,7 +1,7 @@
 """五档盘口 sealed(真假涨停/跌停) 服务 — 独立旁路线。
 
 架构(完全解耦):
-  - 只读 enriched(拿涨跌停名单), 不写回 enriched(14列不动)
+  - 只读 enriched(拿涨跌停名单), 不写回 enriched 存储列
   - sealed 存独立 parquet(data/depth5/date=xxx/part.parquet)
   - limit_ladder API 查询时 LEFT JOIN(同 ext_columns 机制)
   - signal_limit_up 永远是"价格涨停", sealed 是叠加的真假判定层

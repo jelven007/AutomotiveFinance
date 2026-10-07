@@ -58,10 +58,12 @@ def test_queued_pipeline_is_cancellable_and_reaped_when_stalled(capacity):
             called = threading.Event()
             future = pool.submit(run_with_capacity, jid, called.set)
             wait_for(lambda: waiting(store, jid))
-            assert store.get(jid)["status"] == "pending"
+            assert store.get(jid)["status"] == "queued"
             store.terminate(jid, "cancelled in queue")
             with pytest.raises(JobCancelledError):
                 future.result(timeout=1)
+            store.cancelled(jid)
+            assert store.get(jid)["status"] == "cancelled"
             assert not called.is_set()
 
             # 2) 排队停滞超阈值 → reap 回收(修复点), 等待线程经取消标志退出
@@ -74,10 +76,11 @@ def test_queued_pipeline_is_cancellable_and_reaped_when_stalled(capacity):
             store._active_jobs[jid2]["last_progress_at"] = stale
             store.reap_stale()
             j2 = store.get(jid2)
-            assert j2["status"] == "failed"
-            assert "排队等待重任务执行槽" in j2["error"]
+            assert j2["status"] == "cancelling"
+            assert "排队等待重任务执行槽" in j2["cancellation_reason"]
             with pytest.raises(JobCancelledError):
                 future2.result(timeout=1)
+            store.cancelled(jid2)
             assert not called2.is_set()
             assert limiter.in_use == 1
     finally:
@@ -100,13 +103,15 @@ def test_cancel_does_not_release_running_worker_capacity(capacity):
         try:
             assert entered.wait(1)
             store.terminate(jid, "cancelled while computing")
-            assert store.get(jid)["status"] == "failed"
+            assert store.get(jid)["status"] == "cancelling"
             assert limiter.in_use == 2
             assert not limiter.acquire("normal", timeout=0)
         finally:
             finish.set()
         with pytest.raises(JobCancelledError):
             future.result(timeout=1)
+    store.cancelled(jid)
+    assert store.get(jid)["status"] == "cancelled"
     assert limiter.in_use == 0
 
 
@@ -214,7 +219,7 @@ def test_api_jobs_wait_before_computing(
             jid = response.json()["job_id"]
             wait_for(lambda: waiting(store, jid))
             assert not entered.is_set()
-            assert client.get(f"/api/pipeline/jobs/{jid}").json()["status"] == "pending"
+            assert client.get(f"/api/pipeline/jobs/{jid}").json()["status"] == "queued"
             limiter.release("normal")
             released = True
             assert entered.wait(2)
@@ -293,7 +298,7 @@ def test_background_pipeline_entries_share_capacity(capacity, monkeypatch, entry
             wait_for(lambda: store.active_id() is not None)
             jid = store.active_id()
             wait_for(lambda: waiting(store, jid))
-            assert store.get(jid)["status"] == "pending"
+            assert store.get(jid)["status"] == "queued"
             assert not called.is_set()
         finally:
             limiter.release("normal")

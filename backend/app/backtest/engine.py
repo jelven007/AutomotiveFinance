@@ -462,6 +462,12 @@ class BacktestEngine:
                     if asset_type == "stock" and self.repo is not None
                     else None
                 ),
+                instrument_history=(
+                    getattr(self.repo, "get_instrument_history", lambda: pl.DataFrame())()
+                    if asset_type == "stock" and self.repo is not None
+                    else None
+                ),
+                include_instrument_metadata=asset_type == "stock",
             )
             join_cols = ["symbol"] if "symbol" in instruments.columns else []
             join_cols.extend(
@@ -515,6 +521,11 @@ class BacktestEngine:
 
         parquet_root = self.repo.store.data_dir / enriched_dirname(asset_type)
         instruments = self.repo.get_instruments_asset(asset_type)
+        instrument_history = (
+            getattr(self.repo, "get_instrument_history", lambda: pl.DataFrame())()
+            if asset_type == "stock"
+            else None
+        )
         field_columns = (
             set(feature_plan.base_columns)
             | set(feature_plan.instrument_columns)
@@ -550,6 +561,7 @@ class BacktestEngine:
                     field_columns=field_columns,
                     symbols=symbols,
                     instruments=instruments,
+                    instrument_history=instrument_history,
                     cache_root=cache_root,
                     coverage_start=coverage_start,
                     coverage_end=coverage_end,
@@ -655,7 +667,16 @@ class BacktestEngine:
         # 按 asset_type 取维表: ETF 回测须用 ETF 维表, 否则名称 JOIN 失败(全 null)、
         # 涨停信号算在错误的 instruments 上。
         instruments = self.repo.get_instruments_asset(asset_type)
-        df = compute_all(df, instruments=instruments)
+        df = compute_all(
+            df,
+            instruments=instruments,
+            instrument_history=(
+                getattr(self.repo, "get_instrument_history", lambda: pl.DataFrame())()
+                if asset_type == "stock"
+                else None
+            ),
+            include_instrument_metadata=asset_type == "stock",
+        )
         if not instruments.is_empty() and "name" not in df.columns:
             inst_cols = [c for c in ["symbol", "name"] if c in instruments.columns]
             if len(inst_cols) == 2:

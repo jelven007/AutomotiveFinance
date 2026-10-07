@@ -9,79 +9,36 @@ import re
 import threading
 import uuid
 from collections.abc import Collection, Mapping
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, cast
 
-MiningRunStatus = Literal[
-    "queued",
-    "running",
-    "cancelling",
-    "succeeded",
-    "succeeded_with_budget_exhausted",
-    "failed",
-    "cancelled",
-    "interrupted",
-    "skipped_prerequisite",
-]
+from app.services.task_state import (
+    ACTIVE_TASK_STATUSES,
+    SUCCESS_TASK_STATUSES,
+    TASK_STATUSES,
+    TERMINAL_TASK_STATUSES,
+    InvalidTaskStatusTransitionError,
+    TaskStatus,
+    normalize_task_status,
+    transition_task_record,
+    utc_now_iso,
+)
+
+MiningRunStatus = TaskStatus
 ArtifactName = Literal["factors", "correlation", "candidates", "folds"]
 
-RUN_STATUSES: frozenset[str] = frozenset(
-    {
-        "queued",
-        "running",
-        "cancelling",
-        "succeeded",
-        "succeeded_with_budget_exhausted",
-        "failed",
-        "cancelled",
-        "interrupted",
-        "skipped_prerequisite",
-    }
-)
-ACTIVE_RUN_STATUSES: frozenset[str] = frozenset({"queued", "running", "cancelling"})
-SUCCESS_RUN_STATUSES: frozenset[str] = frozenset({"succeeded", "succeeded_with_budget_exhausted"})
-TERMINAL_RUN_STATUSES: frozenset[str] = RUN_STATUSES - ACTIVE_RUN_STATUSES
+RUN_STATUSES = TASK_STATUSES
+ACTIVE_RUN_STATUSES = ACTIVE_TASK_STATUSES
+SUCCESS_RUN_STATUSES = SUCCESS_TASK_STATUSES
+TERMINAL_RUN_STATUSES = TERMINAL_TASK_STATUSES
 ARTIFACT_NAMES: frozenset[str] = frozenset({"factors", "correlation", "candidates", "folds"})
 MAX_EVENTS = 256
 MAX_EVENT_PAYLOAD_BYTES = 16 * 1024
 _SCHEMA_VERSION = 1
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _STORE_LOCK = threading.RLock()
-
-_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "queued": frozenset(
-        {"running", "cancelling", "cancelled", "failed", "interrupted", "skipped_prerequisite"}
-    ),
-    "running": frozenset(
-        {
-            "cancelling",
-            "succeeded",
-            "succeeded_with_budget_exhausted",
-            "failed",
-            "cancelled",
-            "interrupted",
-            "skipped_prerequisite",
-        }
-    ),
-    "cancelling": frozenset(
-        {
-            "succeeded",
-            "succeeded_with_budget_exhausted",
-            "failed",
-            "cancelled",
-            "interrupted",
-        }
-    ),
-    "succeeded": frozenset(),
-    "succeeded_with_budget_exhausted": frozenset(),
-    "failed": frozenset(),
-    "cancelled": frozenset(),
-    "interrupted": frozenset(),
-    "skipped_prerequisite": frozenset(),
-}
-
 
 class MiningRunStoreError(RuntimeError):
     pass
@@ -137,6 +94,7 @@ class MiningRunStore:
         data_fingerprint: Any,
         *,
         run_id: str | None = None,
+        source: str = "manual",
     ) -> dict[str, Any]:
         """Create a queued run and its initial on-disk files."""
         safe_run_id = self._validate_run_id(uuid.uuid4().hex if run_id is None else run_id)
@@ -146,6 +104,8 @@ class MiningRunStore:
         manifest = {
             "schema_version": _SCHEMA_VERSION,
             "run_id": safe_run_id,
+            "kind": "mining",
+            "source": str(source or "manual"),
             "status": "queued",
             "request": canonical_request,
             "data_fingerprint": canonical_fingerprint,
@@ -415,25 +375,12 @@ class MiningRunStore:
         *,
         error: str | None,
     ) -> dict[str, Any]:
-        previous = manifest["status"]
-        if previous == status:
-            return manifest
-        if status not in _ALLOWED_TRANSITIONS[previous]:
-            raise InvalidMiningStatusTransitionError(
-                f"cannot transition from {previous} to {status}"
-            )
-
-        now = _now_iso()
-        manifest["status"] = status
-        manifest["updated_at"] = now
-        if status == "running" and not manifest.get("started_at"):
-            manifest["started_at"] = now
-        if status == "cancelling":
-            manifest["cancellation_requested_at"] = now
-        if status in TERMINAL_RUN_STATUSES:
-            manifest["finished_at"] = now
-        if error is not None:
-            manifest["error"] = str(error)
+        try:
+            updated = transition_task_record(manifest, status, error=error)
+        except InvalidTaskStatusTransitionError as exc:
+            raise InvalidMiningStatusTransitionError(str(exc)) from exc
+        manifest.clear()
+        manifest.update(updated)
         _atomic_write_json(self._run_dir(manifest["run_id"]) / "manifest.json", manifest)
         return manifest
 
@@ -452,9 +399,12 @@ class MiningRunStore:
         return self._normalize_manifest(value, run_id)
 
     def _normalize_manifest(self, value: dict[str, Any], run_id: str) -> dict[str, Any]:
-        status = value.get("status", "queued")
-        if status not in RUN_STATUSES:
-            raise MiningRunStoreError(f"invalid status in manifest for run {run_id}")
+        try:
+            status = normalize_task_status(value.get("status", "queued"))
+        except ValueError as exc:
+            raise MiningRunStoreError(
+                f"invalid status in manifest for run {run_id}"
+            ) from exc
         raw_request = value.get("request") if isinstance(value.get("request"), dict) else {}
         data_fingerprint = value.get("data_fingerprint")
         signature = value.get("run_signature")
@@ -477,6 +427,8 @@ class MiningRunStore:
             {
                 "schema_version": value.get("schema_version", 0),
                 "run_id": run_id,
+                "kind": "mining",
+                "source": value.get("source", "legacy"),
                 "status": status,
                 "request": raw_request,
                 "data_fingerprint": data_fingerprint,
@@ -610,7 +562,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return utc_now_iso()
 
 
 def _manifest_sort_key(manifest: dict[str, Any]) -> tuple[str, str]:

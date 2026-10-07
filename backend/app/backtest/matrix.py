@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import weakref
+from bisect import bisect_left
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
@@ -613,7 +614,10 @@ def build_market_data_matrix(
     for column in sorted(wanted_fields):
         if column == "price_limit_pct":
             continue
-        if column in panel.columns and panel[column].dtype.is_numeric():
+        if (
+            column in panel.columns
+            and (panel[column].dtype.is_numeric() or panel[column].dtype == pl.Boolean)
+        ):
             fields[column] = float_matrix(column)
         elif column == "raw_close":
             # A live quote is already an unadjusted price when no separate raw
@@ -685,6 +689,7 @@ def load_market_data_matrix_from_parquet(
     field_columns: set[str] | frozenset[str],
     symbols: list[str] | None = None,
     instruments: pl.DataFrame | None = None,
+    instrument_history: pl.DataFrame | None = None,
     batch_size: int = _ARROW_BATCH_SIZE,
     cache_root: Path | None = None,
     coverage_start: date | None = None,
@@ -721,7 +726,10 @@ def load_market_data_matrix_from_parquet(
         | _normalize_matrix_cache_fields(cache_field_columns or field_columns)
     )
     normalized_symbols = _normalize_symbol_request(symbols)
-    instrument_fingerprint = _instrument_fingerprint(instruments).hex()
+    instrument_fingerprint = _instrument_fingerprint(
+        instruments,
+        instrument_history,
+    ).hex()
 
     partitioning = pads.partitioning(
         pa.schema([("date", pa.date32())]),
@@ -743,6 +751,7 @@ def load_market_data_matrix_from_parquet(
             requested_fields,
             normalized_symbols,
             instruments,
+            instrument_history,
             batch_size=batch_size,
             cache_status="disabled",
             cancel_event=cancel_event,
@@ -818,6 +827,7 @@ def load_market_data_matrix_from_parquet(
         build_fields,
         normalized_symbols,
         instruments,
+        instrument_history,
         build_partitions,
         instrument_fingerprint,
         profile_generation,
@@ -917,6 +927,8 @@ def _resolve_matrix_storage_fields(
             vector_fields.add("float_shares")
     if "price_limit_pct" in wanted_fields:
         matrix_fields.add("price_limit_pct")
+    if "is_risk_warning" in wanted_fields:
+        matrix_fields.add("is_risk_warning")
     resolved = matrix_fields | vector_fields
     unresolved = wanted_fields - resolved
     if unresolved:
@@ -932,6 +944,7 @@ def _build_market_data_matrix_from_dataset(
     wanted_fields: frozenset[str],
     symbols: tuple[str, ...] | None,
     instruments: pl.DataFrame | None,
+    instrument_history: pl.DataFrame | None,
     *,
     batch_size: int,
     cache_status: str,
@@ -987,6 +1000,8 @@ def _build_market_data_matrix_from_dataset(
         seen,
         parquet_fields=parquet_fields,
         vector_fields=vector_fields,
+        instrument_history=instrument_history,
+        trading_dates=actual_dates,
     )
     if "price_limit_pct" in fields:
         write_numpy_price_limit_matrix(
@@ -1054,6 +1069,7 @@ def _build_market_data_matrix_cache_from_dataset(
     wanted_fields: frozenset[str],
     symbols: tuple[str, ...] | None,
     instruments: pl.DataFrame | None,
+    instrument_history: pl.DataFrame | None,
     source_partitions: Mapping[str, str],
     instrument_fingerprint: str,
     profile_generation: str,
@@ -1146,6 +1162,8 @@ def _build_market_data_matrix_cache_from_dataset(
             seen,
             parquet_fields=parquet_fields,
             vector_fields=vector_fields,
+            instrument_history=instrument_history,
+            trading_dates=actual_dates,
         )
         _mask_unseen_staging_fields(fields, seen)
         _raise_if_matrix_cancelled(cancel_event)
@@ -1402,6 +1420,8 @@ def _populate_matrix_derived_arrays(
     *,
     parquet_fields: list[str],
     vector_fields: list[str],
+    instrument_history: pl.DataFrame | None = None,
+    trading_dates: list[date] | None = None,
 ) -> tuple[list[str], Mapping[str, np.ndarray]]:
     instrument_wanted = set(wanted_fields)
     if "turnover_rate" in wanted_fields and "turnover_rate" not in fields:
@@ -1444,7 +1464,61 @@ def _populate_matrix_derived_arrays(
                 arrays["volume"],
                 float_shares,
             )
+    if "is_risk_warning" in wanted_fields and "is_risk_warning" not in parquet_fields:
+        current_risk = np.asarray(
+            [
+                any(token in name.upper() for token in ("ST", "*ST", "退"))
+                for name in names
+            ],
+            dtype=np.float32,
+        )
+        fields["is_risk_warning"][:] = current_risk[None, :]
+    if "is_risk_warning" in wanted_fields and trading_dates is not None:
+        _apply_instrument_risk_history(
+            fields["is_risk_warning"],
+            trading_dates,
+            actual_symbols,
+            instrument_history,
+        )
     return names, latest_limits
+
+
+def _apply_instrument_risk_history(
+    target: np.ndarray,
+    trading_dates: list[date],
+    symbols: list[str],
+    history: pl.DataFrame | None,
+) -> None:
+    """Overlay SCD2 risk-warning intervals on a time-by-asset matrix."""
+    if (
+        history is None
+        or history.is_empty()
+        or not {"symbol", "valid_from", "valid_to", "is_risk_warning"}
+        <= set(history.columns)
+    ):
+        return
+    symbol_to_id = {symbol: index for index, symbol in enumerate(symbols)}
+    relevant = history.filter(pl.col("symbol").is_in(symbols)).sort(
+        ["symbol", "valid_from"]
+    )
+    for row in relevant.select(
+        "symbol", "valid_from", "valid_to", "is_risk_warning"
+    ).iter_rows(named=True):
+        asset_id = symbol_to_id.get(str(row["symbol"]))
+        valid_from = row["valid_from"]
+        if asset_id is None or not isinstance(valid_from, date):
+            continue
+        valid_to = row["valid_to"]
+        start = bisect_left(trading_dates, valid_from)
+        stop = (
+            bisect_left(trading_dates, valid_to)
+            if isinstance(valid_to, date)
+            else len(trading_dates)
+        )
+        if start < stop:
+            target[start:stop, asset_id] = (
+                1.0 if bool(row["is_risk_warning"]) else 0.0
+            )
 
 
 def _write_turnover_rate_matrix(
@@ -1591,17 +1665,49 @@ def _latest_partition_date(root: Path) -> date | None:
     return _partition_date_bounds(root)[1]
 
 
-def _instrument_fingerprint(instruments: pl.DataFrame | None) -> bytes:
-    if instruments is None or instruments.is_empty() or "symbol" not in instruments.columns:
-        return b"no-instruments"
+def _instrument_fingerprint(
+    instruments: pl.DataFrame | None,
+    instrument_history: pl.DataFrame | None = None,
+) -> bytes:
     columns = [
         name
         for name in ("symbol", "name", "total_shares", "float_shares", "limit_up", "limit_down")
-        if name in instruments.columns
+        if instruments is not None and name in instruments.columns
     ]
-    payload = instruments.select(columns).sort("symbol").to_dicts()
+    current = (
+        instruments.select(columns).sort("symbol").to_dicts()
+        if instruments is not None
+        and not instruments.is_empty()
+        and "symbol" in instruments.columns
+        else []
+    )
+    history_columns = [
+        name
+        for name in (
+            "symbol",
+            "valid_from",
+            "valid_to",
+            "name",
+            "is_risk_warning",
+            "is_listed",
+        )
+        if instrument_history is not None and name in instrument_history.columns
+    ]
+    history = (
+        instrument_history.select(history_columns)
+        .sort(["symbol", "valid_from"])
+        .to_dicts()
+        if instrument_history is not None
+        and not instrument_history.is_empty()
+        and {"symbol", "valid_from"} <= set(instrument_history.columns)
+        else []
+    )
     return hashlib.blake2b(
-        json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"),
+        json.dumps(
+            {"current": current, "history": history},
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8"),
         digest_size=20,
     ).digest()
 
@@ -2098,6 +2204,7 @@ def _arrow_numeric(value_type: pa.DataType) -> bool:
         pa.types.is_integer(value_type)
         or pa.types.is_floating(value_type)
         or pa.types.is_decimal(value_type)
+        or pa.types.is_boolean(value_type)
     )
 
 
@@ -3657,14 +3764,30 @@ def _build_basic_filter_mask_uncached(market: MarketDataMatrix, config: dict) ->
     _apply_bound(mask, _optional_field(market, "turnover_rate"), config, "turnover")
 
     if config.get("exclude_st"):
-        asset_mask = np.array(
-            [
-                not any(token in name.upper() for token in ("ST", "*ST", "退"))
-                for name in market.names
-            ],
-            dtype=bool,
-        )
-        mask &= asset_mask[None, :]
+        historical_risk = market.fields.get("is_risk_warning")
+        if historical_risk is not None:
+            current_risk = np.array(
+                [
+                    any(token in name.upper() for token in ("ST", "*ST", "退"))
+                    for name in market.names
+                ],
+                dtype=bool,
+            )
+            effective_risk = np.where(
+                np.isfinite(historical_risk),
+                historical_risk >= 0.5,
+                current_risk[None, :],
+            )
+            mask &= ~effective_risk
+        else:
+            asset_mask = np.array(
+                [
+                    not any(token in name.upper() for token in ("ST", "*ST", "退"))
+                    for name in market.names
+                ],
+                dtype=bool,
+            )
+            mask &= asset_mask[None, :]
 
     boards = config.get("boards")
     if isinstance(boards, list) and boards:

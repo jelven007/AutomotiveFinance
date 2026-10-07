@@ -3209,7 +3209,7 @@ export const api = {
     '/api/pipeline/run', { method: 'POST' },
   ),
   pipelineJob: (id: string) => request<PipelineJob>(`/api/pipeline/jobs/${id}`),
-  /** 手动停止一个 running/pending 的同步任务 (协作式: 当前分块完成后线程自行退出) */
+  /** 手动停止一个 queued/running 的同步任务 (协作式: 当前分块完成后进入 cancelled) */
   pipelineJobCancel: (id: string) =>
     request<{ cancelled: string }>(`/api/pipeline/jobs/${id}/cancel`, { method: 'POST' }),
   pipelineJobs: (limit = 20) =>
@@ -4099,13 +4099,20 @@ export const api = {
 // ===== Pipeline =====
 export interface PipelineJob {
   id: string
-  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  schema_version?: number
+  kind?: string
+  source?: string
+  status: 'pending' | 'queued' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   stage: string
   progress: number          // 0-100 整体进度
   stage_pct: number         // 0-100 当前阶段内进度
   log: { ts: string; stage: string; msg: string }[]
+  created_at?: string | null
+  updated_at?: string | null
   started_at: string | null
   finished_at: string | null
+  cancellation_requested_at?: string | null
+  cancellation_reason?: string | null
   duration_s: number | null
   result: {
     universe_size: number

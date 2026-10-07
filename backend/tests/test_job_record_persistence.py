@@ -2,13 +2,13 @@
 
 背景(用户反馈): 全市场同步 12:11~12:42 成功结束后 0.7s, uvicorn --reload
 检测到代码变更杀死 worker, 恰好落在管道完成与 job_store.succeed() 落盘之间
-—— 数据已写盘但同步历史无任何记录。旧实现 pending/running 仅存内存、终态才
+—— 数据已写盘但同步历史无任何记录。旧实现 queued/running 仅存内存、终态才
 落盘, 存在整段丢失窗口。
 
 修复后契约:
-  - create()/start() 即落盘 pending/running 快照;
-  - 下次进程启动(= 新 JobStore 实例, 同目录)把遗留的 pending/running
-    孤儿记录补标为 failed(中断), finished_at 取文件 mtime;
+  - create()/start() 即落盘 queued/running 快照;
+  - 下次进程启动(= 新 JobStore 实例, 同目录)把遗留的活跃记录
+    补标为 interrupted, finished_at 取文件 mtime;
   - 终态记录不受补录影响; 终态写入覆盖 running 快照(同一文件)。
 均为纯逻辑, 不触网。
 """
@@ -25,14 +25,23 @@ def _read_disk(d, jid: str) -> dict:
 
 # ── 创建/启动即落盘 ──────────────────────────────────────────────────────
 
-def test_create_writes_pending_snapshot_to_disk(tmp_path):
+def test_create_writes_queued_snapshot_to_disk(tmp_path):
     d = tmp_path / "jobs"
     store = JobStore(store_dir=d)
-    jid, _ = store.create(timeout_s=60)
+    jid, _ = store.create(
+        timeout_s=60,
+        kind="daily_pipeline",
+        source="scheduled",
+        request={"scope": "stock"},
+    )
 
     disk = _read_disk(d, jid)
-    assert disk["status"] == "pending"
+    assert disk["status"] == "queued"
     assert disk["stage"] == "init"
+    assert disk["schema_version"] == 2
+    assert disk["kind"] == "daily_pipeline"
+    assert disk["source"] == "scheduled"
+    assert disk["request"] == {"scope": "stock"}
 
 
 def test_start_updates_disk_snapshot_to_running(tmp_path):
@@ -60,7 +69,7 @@ def test_orphan_running_record_is_reaped_on_next_boot(tmp_path):
     revived = JobStore(store_dir=d)
     j = revived.get(jid)
     assert j is not None
-    assert j["status"] == "failed"
+    assert j["status"] == "interrupted"
     assert "中断" in j["error"]
     assert j["finished_at"] is not None
     # finished_at 基于文件 mtime(≈ start 时刻), 时长不得虚增为负或巨大
@@ -70,7 +79,7 @@ def test_orphan_running_record_is_reaped_on_next_boot(tmp_path):
     assert any(x["id"] == jid for x in revived.list_recent())
 
 
-def test_orphan_pending_record_is_reaped(tmp_path):
+def test_orphan_queued_record_is_reaped(tmp_path):
     """进程死在 create() 与 start() 之间: 记录同样可见, 时长为 None。"""
     d = tmp_path / "jobs"
     dead = JobStore(store_dir=d)
@@ -79,8 +88,20 @@ def test_orphan_pending_record_is_reaped(tmp_path):
 
     revived = JobStore(store_dir=d)
     j = revived.get(jid)
-    assert j["status"] == "failed"
+    assert j["status"] == "interrupted"
     assert j["duration_s"] is None
+
+
+def test_orphan_cancelling_record_is_recovered_as_interrupted(tmp_path):
+    d = tmp_path / "jobs"
+    dead = JobStore(store_dir=d)
+    jid, _ = dead.create(timeout_s=60)
+    dead.start(jid)
+    dead.terminate(jid, "shutdown")
+
+    assert dead.get(jid)["status"] == "cancelling"
+    revived = JobStore(store_dir=d)
+    assert revived.get(jid)["status"] == "interrupted"
 
 
 def test_reap_does_not_touch_terminal_records(tmp_path):
@@ -97,7 +118,7 @@ def test_reap_does_not_touch_terminal_records(tmp_path):
 
 
 def test_reap_allows_new_job_after_dead_orphan(tmp_path):
-    """补录后旧 job 已 failed: 新进程 create() 不被死孤儿阻塞(单飞只看内存)。"""
+    """补录后旧 job 已 interrupted: 新进程 create() 不被死孤儿阻塞。"""
     d = tmp_path / "jobs"
     dead = JobStore(store_dir=d)
     old_jid, _ = dead.create(timeout_s=60)
@@ -123,3 +144,24 @@ def test_terminal_write_replaces_running_snapshot(tmp_path):
     disk = _read_disk(d, jid)
     assert disk["status"] == "failed"
     assert disk["error"] == "boom"
+
+
+def test_legacy_pending_record_is_read_as_queued(tmp_path):
+    d = tmp_path / "jobs"
+    store = JobStore(store_dir=d)
+    (d / "legacy.json").write_text(
+        json.dumps({
+            "id": "legacy",
+            "status": "pending",
+            "stage": "init",
+            "progress": 0,
+            "started_at": None,
+            "finished_at": None,
+            "duration_s": None,
+            "result": None,
+            "error": None,
+        }),
+        encoding="utf-8",
+    )
+
+    assert store.get("legacy")["status"] == "queued"

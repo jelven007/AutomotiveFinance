@@ -163,6 +163,14 @@ class MinuteSignalReplayer:
         prev_raw_close: dict[str, float] = {}
         prev_name: dict[str, str] = {}
         adj_factor: dict[str, float] = {}
+        risk_warning_by_day: dict[tuple[date, str], bool] = {}
+        if "is_risk_warning" in panel.columns:
+            risk_warning_by_day = {
+                (row[0], str(row[1])): bool(row[2])
+                for row in panel.select(
+                    "date", "symbol", "is_risk_warning"
+                ).drop_nulls("is_risk_warning").iter_rows()
+            }
 
         for i, day in enumerate(minute_days):
             if cancel_event is not None and cancel_event.is_set():
@@ -232,10 +240,19 @@ class MinuteSignalReplayer:
                 raw_close = float(close)
                 name = prev_name.get(str(symbol), "")
                 prev = prev_raw_close.get(str(symbol))
+                is_risk_warning = risk_warning_by_day.get(
+                    (day, str(symbol)),
+                    is_risk_warning_name(name),
+                )
                 # 涨停拒买: 触发分钟收盘已达当日涨停价 (按 T-1 原始收盘 + 板块规则)。
                 if prev is not None and prev > 0:
                     limit_up = _scalar_limit_up_price(
-                        prev, price_limit_pct(str(symbol), day, is_risk_warning=is_risk_warning_name(name)),
+                        prev,
+                        price_limit_pct(
+                            str(symbol),
+                            day,
+                            is_risk_warning=is_risk_warning,
+                        ),
                     )
                     if raw_close >= limit_up - 1e-9:
                         result.buy_limit_up += 1

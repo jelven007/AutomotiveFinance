@@ -16,6 +16,10 @@ export function HistoryRow({ job, onClick }: { job: any; onClick: () => void }) 
     failed:    { icon: XCircle, color: 'text-danger' },
     running:   { icon: Loader2, color: 'text-accent', spinning: true },
     pending:   { icon: Loader2, color: 'text-muted', spinning: true },
+    queued:    { icon: Loader2, color: 'text-muted', spinning: true },
+    cancelling: { icon: Loader2, color: 'text-danger', spinning: true },
+    cancelled: { icon: XCircle, color: 'text-muted' },
+    interrupted: { icon: AlertCircle, color: 'text-danger' },
   }[job.status as 'succeeded'] ?? { icon: AlertCircle, color: 'text-muted' }
   const Icon = statusIcon.icon
 

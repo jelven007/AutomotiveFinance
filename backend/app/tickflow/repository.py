@@ -367,6 +367,8 @@ class KlineRepository:
         self._instruments_cache: pl.DataFrame | None = None
         self._historical_shares_cache: pl.DataFrame | None = None
         self._historical_shares_mtime_ns: int | None = None
+        self._instrument_history_cache: pl.DataFrame | None = None
+        self._instrument_history_mtime_ns: int | None = None
         # 完整 enriched 历史 (含所有指标, 供 filter_history 策略使用)
         self._enriched_history_cache: pl.DataFrame | None = None  # ~100万行
         self._enriched_history_start: date | None = None
@@ -543,6 +545,10 @@ class KlineRepository:
         self._live_agg_cache_date = None
         self._live_agg_check_date = None
         self._instruments_cache = None
+        self._historical_shares_cache = None
+        self._historical_shares_mtime_ns = None
+        self._instrument_history_cache = None
+        self._instrument_history_mtime_ns = None
         self._index_instruments_cache = None
         self._etf_enriched_cache = None
         self._etf_enriched_cache_date = None
@@ -564,7 +570,7 @@ class KlineRepository:
     def _refresh_enriched_impl(self) -> None:
         """从 parquet 加载 enriched 最新日到内存 + 构建聚合表。
 
-        enriched parquet 仅存 14 列基础数据。启动时读入历史数据并即时计算完整指标，
+        enriched parquet 仅存基础行情、证券时点状态和递推数据。启动时读入历史数据并即时计算完整指标，
         将结果缓存在内存中供各服务使用。
 
         优化: 扩大历史读取范围, 同时缓存完整历史 (含指标), 供 filter_history 策略直接复用。
@@ -585,7 +591,7 @@ class KlineRepository:
                 logger.info("enriched refresh skipped: no latest date (%.2fs)", time.perf_counter() - started)
                 return
 
-            # Step 1: 直接读最新日期的分区文件 (仅 14 列)
+            # Step 1: 直接读最新日期的窄表分区文件
             enriched_dir = self.store.data_dir / "kline_daily_enriched"
             ds = latest.isoformat() if hasattr(latest, "isoformat") else str(latest)
             target_parquet = enriched_dir / f"date={ds}" / "part.parquet"
@@ -602,7 +608,7 @@ class KlineRepository:
                 logger.info("enriched refresh skipped: latest parquet empty (%.2fs)", time.perf_counter() - started)
                 return
 
-            # Step 2: 读近 300 天 14 列数据 → compute → filter(latest) → 缓存
+            # Step 2: 读近 300 天存储列 → compute → filter(latest) → 缓存
             # 300 日历天 ≈ 210 交易日, 覆盖 filter_history 最大 lookback(90) + warmup(60)
             try:
                 from datetime import timedelta
@@ -636,6 +642,7 @@ class KlineRepository:
                             if instruments is not None and not instruments.is_empty()
                             else None
                         ),
+                        instrument_history=self.get_instrument_history(),
                         include_instrument_metadata=True,
                     )
                     del df_hist
@@ -681,9 +688,9 @@ class KlineRepository:
             except EnrichedGenerationUnavailableError:
                 raise
             except Exception as e:  # noqa: BLE001
-                logger.warning("enriched 即时计算失败, 使用原始 14 列缓存: %s", e)
+                logger.warning("enriched 即时计算失败, 使用原始存储列缓存: %s", e)
 
-            # 降级: 直接使用 14 列数据 + 构建 live_agg
+            # 降级: 直接使用存储列数据 + 构建 live_agg
             self._enriched_cache = df_latest
             self._enriched_cache_date = latest
             step = time.perf_counter()
@@ -1349,6 +1356,20 @@ class KlineRepository:
             self._historical_shares_mtime_ns = mtime_ns
         return self._historical_shares_cache
 
+    def get_instrument_history(self) -> pl.DataFrame:
+        """读取证券状态 SCD2 历史，并在文件更新后自动刷新缓存。"""
+        from app.instrument_history import history_path, load_instrument_history
+
+        path = history_path(self.store.data_dir)
+        mtime_ns = path.stat().st_mtime_ns if path.exists() else None
+        if (
+            self._instrument_history_cache is None
+            or mtime_ns != self._instrument_history_mtime_ns
+        ):
+            self._instrument_history_cache = load_instrument_history(self.store.data_dir)
+            self._instrument_history_mtime_ns = mtime_ns
+        return self._instrument_history_cache
+
     def get_index_instruments(self) -> pl.DataFrame:
         """返回缓存的指数 instruments DataFrame。如无缓存则懒加载。"""
         if self._index_instruments_cache is None:
@@ -1451,7 +1472,7 @@ class KlineRepository:
         end: date,
         columns: list[str] | None = None,
     ) -> pl.DataFrame:
-        """单股日K查询 — 从14列parquet读取后即时计算指标。"""
+        """单股日K查询 — 从 enriched 窄表读取后即时计算指标。"""
         from datetime import timedelta
 
         # 快路径: 请求的列全是 parquet 直接存储的列 (如迷你蜡烛图只要 OHLCV) →
@@ -1490,7 +1511,7 @@ class KlineRepository:
                     & (pl.col("date") <= end)
                 )
         if df.is_empty():
-            # 扫描14列 parquet
+            # 扫描 enriched 窄表 parquet
             df = self._scan_daily_symbol(symbol, warmup_start, end, None)
             if not df.is_empty():
                 df = self._compute_enriched_range(df)
@@ -1790,7 +1811,7 @@ class KlineRepository:
     # ================================================================
 
     def _compute_enriched_range(self, df: pl.DataFrame) -> pl.DataFrame:
-        """对14列enriched数据即时计算完整指标+信号。输入应含足够预热行数。"""
+        """对 enriched 存储列即时计算完整指标和信号。输入应含足够预热行数。"""
         from app.indicators.pipeline import compute_indicators, compute_signals, compute_limit_signals, filter_halt_days
         if df.is_empty() or df.height < 2:
             return df
@@ -1806,6 +1827,8 @@ class KlineRepository:
                 df,
                 instruments,
                 historical_shares=self.get_historical_shares(),
+                instrument_history=self.get_instrument_history(),
+                include_instrument_metadata=True,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("on-demand compute failed: %s", e)
@@ -2098,7 +2121,7 @@ class KlineRepository:
         self._write_daily_partition(df, "kline_daily")
 
     def append_enriched(self, df: pl.DataFrame) -> None:
-        """按日分区写入 enriched 数据 (merge-upsert)。磁盘仅写入 14 列存储列。"""
+        """按日分区写入 enriched 数据 (merge-upsert)。磁盘仅写入稳定存储列。"""
         if df.is_empty():
             return
         from app.indicators.pipeline import ENRICHED_STORAGE_COLS
@@ -2453,7 +2476,7 @@ class KlineRepository:
     def flush_live_enriched(self, df: pl.DataFrame) -> None:
         """覆写当天 kline_daily_enriched 分区 (实时 enriched 落盘, 非merge)。
 
-        内存缓存保留完整指标列供各服务使用，磁盘仅写入 14 列存储列。
+        内存缓存保留完整指标列供各服务使用，磁盘仅写入稳定存储列。
         """
         self.flush_live_enriched_asset("stock", df)
 

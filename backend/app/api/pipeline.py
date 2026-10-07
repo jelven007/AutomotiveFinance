@@ -45,8 +45,8 @@ async def trigger_pipeline_job(repo, capset, quote_service=None) -> dict:
     # reap_stale 会在 /run 和 /jobs/{id} 轮询端点都调用,保证卡死后能自愈。
     job_store.reap_stale()
 
-    # 单飞: 复用任何活跃 (pending∨running) 任务, is_new=False 时不再调度新任务
-    job_id, is_new = job_store.create()
+    # 单飞: 复用任何活跃任务, is_new=False 时不再调度新任务
+    job_id, is_new = job_store.create(kind="daily_pipeline", source="manual")
     if not is_new:
         return {"job_id": job_id, "reused": True}
 
@@ -78,8 +78,7 @@ async def trigger_pipeline_job(repo, capset, quote_service=None) -> dict:
             job_store.succeed(job_id, result)
             invalidate_storage_cache()
         except JobCancelledError:
-            # 已被 reap/手动取消终止: job 状态已由 terminate() 写为 failed,
-            # 拉取线程在分块回调处自行退出, 这里无需(也无法)再写状态。
+            job_store.cancelled(job_id)
             logger.warning("pipeline job %s cancelled", job_id)
         except Exception as e:  # noqa: BLE001
             logger.exception("pipeline failed")
@@ -105,11 +104,11 @@ def get_job(job_id: str) -> dict:
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict:
-    """手动取消一个 running 的 job(协作式: 拉取线程在当前分块完成后自行退出)。"""
+    """手动取消活跃任务；终态在执行体实际退出后发布。"""
     j = job_store.get(job_id)
     if not j:
         raise HTTPException(status_code=404, detail="job not found")
-    if j["status"] not in ("running", "pending"):
+    if j["status"] not in ("queued", "running", "cancelling"):
         raise HTTPException(status_code=400, detail=f"job status is {j['status']}, cannot cancel")
     job_store.terminate(job_id, "用户手动取消")
     return {"cancelled": job_id}

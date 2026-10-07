@@ -24,7 +24,7 @@ from app.data_providers.instrument_status import (
     normalize_instrument_name,
 )
 from app.market_time import CN_TZ, cn_now
-from app.services import preferences, trading_day
+from app.services import alert_store, preferences, trading_day, webhook_adapter
 from app.services.fs_utils import atomic_write_parquet, atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,8 @@ _CAPTURE_END = dt_time(9, 29, 30)
 _MIN_COVERAGE_RATIO = 0.95
 _MIN_SESSION_MATCH_RATIO = 0.80
 _LOCK = threading.Lock()
+_FAILURE_ALERT_LOCK = threading.Lock()
+_NON_FAILURE_STATES = {"ready", "already_captured", "market_closed"}
 
 _SCHEMA = {
     "capture_id": pl.String,
@@ -393,6 +395,96 @@ def capture_auction_snapshot(
             day, universe.height, quote_count, matched_count,
         )
         return metadata
+
+
+def notify_capture_failure(
+    data_dir: Path,
+    result: dict,
+    *,
+    quote_service=None,
+) -> bool:
+    """Persist and broadcast one final auction-capture failure per trade date."""
+    state = str(result.get("state") or "unknown")
+    if state in _NON_FAILURE_STATES:
+        return False
+
+    trade_date = str(result.get("trade_date") or cn_now().date().isoformat())
+    with _FAILURE_ALERT_LOCK:
+        recent = alert_store.list_recent(
+            data_dir,
+            days=alert_store.MAX_DAYS,
+            source="market",
+            type="auction_capture_failed",
+        )
+        if any(event.get("trade_date") == trade_date for event in recent):
+            logger.info("09:25 auction failure alert already sent for %s", trade_date)
+            return False
+
+        reason = str(result.get("message") or state)
+        message = f"09:25 竞价快照采集失败 ({trade_date}): {reason}"
+        diagnostic_keys = (
+            "provider",
+            "universe_as_of",
+            "universe_count",
+            "quote_count",
+            "coverage_ratio",
+            "source_time_match_ratio",
+            "prev_close_match_ratio",
+            "prev_close_sample_count",
+            "latest_prior_daily_date",
+        )
+        diagnostics = {
+            key: result[key]
+            for key in diagnostic_keys
+            if result.get(key) is not None
+        }
+        event = {
+            "ts": int(cn_now().timestamp() * 1000),
+            "rule_id": "system.auction_snapshot",
+            "rule_name": "竞价采集",
+            "source": "market",
+            "type": "auction_capture_failed",
+            "symbol": "",
+            "name": "",
+            "message": message,
+            "price": None,
+            "change_pct": None,
+            "signals": [],
+            "severity": "critical",
+            "trade_date": trade_date,
+            "failure_state": state,
+            "diagnostics": diagnostics,
+        }
+        alert_store.append(data_dir, event)
+
+    if quote_service is not None:
+        try:
+            quote_service.push_alerts([event])
+        except Exception:
+            logger.warning("09:25 auction failure SSE broadcast failed", exc_info=True)
+
+    try:
+        webhook_url = preferences.get_feishu_webhook_url()
+        if webhook_url:
+            webhook_secret = preferences.get_feishu_webhook_secret()
+            body = f"{message}\n失败状态: {state}"
+            if diagnostics:
+                body += "\n诊断信息: " + json.dumps(
+                    diagnostics,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            if not webhook_adapter.send_feishu(
+                webhook_url,
+                "竞价采集失败",
+                body,
+                webhook_secret,
+            ):
+                logger.warning("09:25 auction failure Feishu notification failed")
+    except Exception:
+        logger.warning("09:25 auction failure Feishu notification error", exc_info=True)
+
+    return True
 
 
 def _partition_dates(data_dir: Path) -> list[date]:

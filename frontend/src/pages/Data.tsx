@@ -58,6 +58,8 @@ import { ExtDataStatCard } from '@/components/ext-data/ExtDataStatCard'
 import { CreateExtDialog } from '@/components/ext-data/CreateExtDialog'
 import { EditExtDialog } from '@/components/ext-data/EditExtDialog'
 
+const PIPELINE_TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
+
 export function Data() {
   const qc = useQueryClient()
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
@@ -96,7 +98,7 @@ export function Data() {
     enabled: !!activeJobId,
     refetchInterval: (q: any) => {
       const j = q.state.data
-      return j && (j.status === 'succeeded' || j.status === 'failed') ? false : 1_000
+      return j && PIPELINE_TERMINAL_STATES.has(j.status) ? false : 1_000
     },
   })
 
@@ -282,7 +284,7 @@ export function Data() {
   void cardVisibleTick
 
   useEffect(() => {
-    if (job.data && (job.data.status === 'succeeded' || job.data.status === 'failed')) {
+    if (job.data && PIPELINE_TERMINAL_STATES.has(job.data.status)) {
       qc.invalidateQueries({ queryKey: QK.dataStatus })
       qc.invalidateQueries({ queryKey: QK.pipelineJobs })
       // 同步任务结束后 regime 覆盖范围可能变化, 一并刷新画像
@@ -315,7 +317,10 @@ export function Data() {
 
   const s = status.data
   const isLoading = status.isLoading
-  const isRunning = job.data?.status === 'running' || job.data?.status === 'pending'
+  const isRunning = !!job.data && !PIPELINE_TERMINAL_STATES.has(job.data.status)
+  const canCancel = job.data?.status === 'queued'
+    || job.data?.status === 'pending'
+    || job.data?.status === 'running'
   const isStarting = startSync.isPending
   const hasData = !!(s?.instruments?.rows || s?.daily?.rows)
   // none 档(无 key / 无效 key) → 禁用立即同步 (同步依赖付费档的批量端点)
@@ -608,7 +613,7 @@ export function Data() {
               )}
               {isStarting ? '启动中…' : isRunning ? '同步中…' : '立即同步'}
             </button>
-            {isRunning && !!activeJobId && (
+            {canCancel && !!activeJobId && (
               <button
                 onClick={() => setShowStopConfirm(true)}
                 title="停止当前同步任务"

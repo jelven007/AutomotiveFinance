@@ -41,7 +41,7 @@ def _make_running_job(store: JobStore, timeout_s: int) -> str:
 # ── 进度停滞判定 ────────────────────────────────────────────────────────
 
 def test_stalled_job_is_reaped(monkeypatch, tmp_path):
-    """无进度上报超过阈值 → 标记失败 + 置取消标志 + 释放执行槽。"""
+    """无进度上报超过阈值 → 请求取消，执行体退出前仍占用执行槽。"""
     monkeypatch.setattr(preferences, "load", lambda: {})
     store = JobStore(store_dir=tmp_path / "jobs")
     jid = _make_running_job(store, timeout_s=60)
@@ -54,11 +54,12 @@ def test_stalled_job_is_reaped(monkeypatch, tmp_path):
     store.reap_stale()
 
     j = store.get(jid)
-    assert j["status"] == "failed"
-    assert "进度停滞" in j["error"]
-    # 协作式取消: 僵尸线程通过 flag 感知(记录已被 fail 弹出, flag 仍在)
+    assert j["status"] == "cancelling"
+    assert "进度停滞" in j["cancellation_reason"]
     assert pipeline_jobs.is_cancelled(jid)
-    # 执行槽已按所有权释放
+    assert pipeline_jobs.try_acquire_run_slot("next") is False
+    store.cancelled(jid)
+    pipeline_jobs.release_run_slot(jid)
     assert pipeline_jobs.try_acquire_run_slot("next") is True
 
 
@@ -85,8 +86,8 @@ def test_hard_cap_terminates_endless_progress(tmp_path):
 
     store.reap_stale()
     j = store.get(jid)
-    assert j["status"] == "failed"
-    assert "硬上限" in j["error"]
+    assert j["status"] == "cancelling"
+    assert "硬上限" in j["cancellation_reason"]
 
 
 def test_progress_updates_heartbeat(tmp_path):
@@ -109,16 +110,17 @@ def test_progress_raises_after_cancel(tmp_path):
         store.progress(jid, "sync", 20, "chunk 2/10")
 
 
-def test_progress_raises_after_record_popped(tmp_path):
-    """terminate() 已把记录弹出后, flag 仍需生效(僵尸靠 flag 而非记录感知)。"""
+def test_progress_raises_while_cancellation_is_pending(tmp_path):
+    """取消请求持久化为中间态，执行体后续进度回调会退出。"""
     store = JobStore(store_dir=tmp_path / "jobs")
     jid = _make_running_job(store, timeout_s=60)
     store.terminate(jid, "超时自动取消")
 
-    # 记录已从内存弹出
-    assert store.get(jid)["status"] == "failed"
+    assert store.get(jid)["status"] == "cancelling"
     with pytest.raises(JobCancelledError):
         store.progress(jid, "sync", 20, "zombie chunk")
+    store.cancelled(jid)
+    assert store.get(jid)["status"] == "cancelled"
 
 
 def test_cancelled_error_survives_chunk_isolation():
@@ -170,7 +172,7 @@ def test_run_slot_reap_release_prevents_zombie_release():
 # ── 手动取消 API 端点契约 (数据页「停止」按钮) ──────────────────────────
 
 def test_manual_cancel_endpoint_contract(monkeypatch, tmp_path):
-    """POST /api/pipeline/jobs/{id}/cancel: running/pending 可停, 终态 400, 未知 404。"""
+    """POST /api/pipeline/jobs/{id}/cancel: 活跃任务可停, 终态 400, 未知 404。"""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -187,19 +189,22 @@ def test_manual_cancel_endpoint_contract(monkeypatch, tmp_path):
     # 未知 job → 404
     assert client.post("/api/pipeline/jobs/nope/cancel").status_code == 404
 
-    # running → 协作式终止: 标 failed + 置取消标志 + 释放执行槽
+    # running → 先记录 cancelling，执行体退出后再发布 cancelled。
     jid = _make_running_job(store, timeout_s=60)
     pipeline_jobs.try_acquire_run_slot(jid)
     resp = client.post(f"/api/pipeline/jobs/{jid}/cancel")
     assert resp.status_code == 200
     assert resp.json() == {"cancelled": jid}
     j = store.get(jid)
-    assert j["status"] == "failed"
-    assert "手动取消" in j["error"]
+    assert j["status"] == "cancelling"
+    assert "手动取消" in j["cancellation_reason"]
     assert pipeline_jobs.is_cancelled(jid)
-    assert pipeline_jobs.try_acquire_run_slot("next") is True
+    assert pipeline_jobs.try_acquire_run_slot("next") is False
 
-    # 已终态 (failed) → 400 拒绝重复取消
+    store.cancelled(jid)
+    pipeline_jobs.release_run_slot(jid)
+
+    # 已终态 → 400 拒绝重复取消
     assert client.post(f"/api/pipeline/jobs/{jid}/cancel").status_code == 400
 
     # 停止后可再建新任务 (再次拉取走完整管道的单飞基础)
@@ -210,8 +215,8 @@ def test_manual_cancel_endpoint_contract(monkeypatch, tmp_path):
 
 # ── 排队等待有上界(「分钟K同步卡死空转」修复) ──────────────────────────
 
-def test_queued_pending_job_is_reaped(monkeypatch, tmp_path):
-    """pending(排队等重任务槽)停滞超阈值 → 同样被回收: 可读错误 + 置取消标志。
+def test_queued_job_is_reaped(monkeypatch, tmp_path):
+    """queued(排队等重任务槽)停滞超阈值 → 请求取消并置取消标志。
 
     旧实现只回收 running: 槽位被僵尸线程/长回测占住时, 排队任务在
     「等待其他计算任务完成…」上无限空转, 且轮询触发的 reap 对它视而不见。
@@ -224,23 +229,23 @@ def test_queued_pending_job_is_reaped(monkeypatch, tmp_path):
     store.reap_stale()
 
     j = store.get(jid)
-    assert j["status"] == "failed"
-    assert "排队等待重任务执行槽" in j["error"]
+    assert j["status"] == "cancelling"
+    assert "排队等待重任务执行槽" in j["cancellation_reason"]
     assert pipeline_jobs.is_cancelled(jid)
 
 
-def test_fresh_pending_job_is_not_reaped(monkeypatch, tmp_path):
+def test_fresh_queued_job_is_not_reaped(monkeypatch, tmp_path):
     """刚进入排队的任务(停滞未超阈值)不得误杀 — create() 锚定的心跳基准生效。"""
     monkeypatch.setattr(preferences, "load", lambda: {})
     store = JobStore(store_dir=tmp_path / "jobs")
     jid, _ = store.create(timeout_s=600)
 
     store.reap_stale()
-    assert store.get(jid)["status"] == "pending"
+    assert store.get(jid)["status"] == "queued"
 
 
-def test_pending_skips_hard_total_cap(monkeypatch, tmp_path):
-    """pending 无 started_at: 总时长硬上限不适用, 只按停滞判定(不会 TypeError)。"""
+def test_queued_skips_hard_total_cap(monkeypatch, tmp_path):
+    """queued 无 started_at: 总时长硬上限不适用, 只按停滞判定。"""
     monkeypatch.setattr(preferences, "load", lambda: {})
     store = JobStore(store_dir=tmp_path / "jobs")
     jid, _ = store.create(timeout_s=pipeline_jobs.HARD_JOB_TIMEOUT_S + 3600)
@@ -248,7 +253,7 @@ def test_pending_skips_hard_total_cap(monkeypatch, tmp_path):
     store._active_jobs[jid]["last_progress_at"] = _iso(_now() - timedelta(seconds=10))
 
     store.reap_stale()
-    assert store.get(jid)["status"] == "pending"
+    assert store.get(jid)["status"] == "queued"
 
 
 def test_run_with_capacity_fails_readably_when_slot_hogged(monkeypatch, tmp_path):

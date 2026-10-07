@@ -600,11 +600,24 @@ def _last_finished(job_label: str) -> str | None:
     jobs = job_store.list_recent(limit=50)
     cache: dict[str, str | None] = {}
     for j in jobs:
-        if j["status"] not in ("succeeded", "failed"):
+        if j["status"] not in ("succeeded", "failed", "cancelled", "interrupted"):
             continue
-        if "instruments_rows" in (j.get("result") or {}) and "instruments" not in cache:
+        kind = j.get("kind")
+        if (
+            (
+                kind == "instruments_sync"
+                or "instruments_rows" in (j.get("result") or {})
+            )
+            and "instruments" not in cache
+        ):
             cache["instruments"] = j["finished_at"]
-        if "daily_days" in (j.get("result") or {}) and "pipeline" not in cache:
+        if (
+            (
+                kind == "daily_pipeline"
+                or "daily_days" in (j.get("result") or {})
+            )
+            and "pipeline" not in cache
+        ):
             cache["pipeline"] = j["finished_at"]
     with _last_finished_lock:
         _last_finished_cache = cache
@@ -664,7 +677,8 @@ def clear_data(request: Request):
     for sub in (
         "kline_daily", "kline_daily_enriched", "kline_index_daily", "kline_index_enriched",
         "kline_etf_daily", "kline_etf_enriched", "kline_etf_minute", "kline_minute",
-        "adj_factor", "adj_factor_etf", "instruments", "instruments_index", "instruments_etf", "pools", "financials",
+        "adj_factor", "adj_factor_etf", "instruments", "instrument_status",
+        "instruments_index", "instruments_etf", "pools", "financials",
         "backtest_results", "screener_results", "ai_cache",
     ):
         d = data_dir / sub

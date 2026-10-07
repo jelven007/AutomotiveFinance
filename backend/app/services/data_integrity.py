@@ -358,7 +358,7 @@ def launch_integrity_repair(app_state, start_date: date, reason: str) -> tuple[s
 
     返回 (job_id, is_new):
     - (None, False)  : 无法修复 (无 batch 能力 / 无 repo)
-    - (id, False)    : 已有 pending/running 任务复用 (singleflight)
+    - (id, False)    : 已有活跃任务复用 (singleflight)
     - (id, True)     : 新建并启动
     任务体与 /api/kline/repair_daily 完全一致: run slot + 实时 paused 互斥 +
     run_repair_daily(override_start_date)。
@@ -391,7 +391,11 @@ def launch_integrity_repair(app_state, start_date: date, reason: str) -> tuple[s
     )
     from app.services.repair_daily import run_repair_daily
 
-    job_id, is_new = job_store.create()
+    job_id, is_new = job_store.create(
+        kind="integrity_repair",
+        source="automatic",
+        request={"start_date": start_date.isoformat()},
+    )
     if not is_new:
         return job_id, False
 
@@ -419,7 +423,7 @@ def launch_integrity_repair(app_state, start_date: date, reason: str) -> tuple[s
             else:
                 job_store.succeed(job_id, result)
         except JobCancelledError:
-            pass  # 已由 terminate() 标记失败
+            job_store.cancelled(job_id)
         except Exception as e:  # noqa: BLE001
             logger.exception("integrity repair failed: job_id=%s", job_id)
             job_store.fail(job_id, str(e))

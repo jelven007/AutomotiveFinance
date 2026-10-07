@@ -198,6 +198,17 @@ curl -fsS http://127.0.0.1:3018/health
 4. 等待任务终态后复查数据覆盖，再恢复依赖它的监控、复盘或研究任务。
 5. 竞价历史不能事后从普通实时行情可靠重建，缺失日期应保留为缺口。
 
+持久任务的统一状态为：
+
+- `queued`：已登记，等待执行资源。
+- `running`：执行体已经开始。
+- `cancelling`：已收到取消请求，但执行体尚未确认退出。
+- `succeeded` / `failed` / `cancelled` / `interrupted`：终态。
+- `succeeded_with_budget_exhausted` / `skipped_prerequisite`：研究任务专用终态。
+
+看到 `cancelling` 时不要立即启动另一个写任务；等待其进入终态，或在执行体无法退出
+时重启单个应用进程。旧记录的 `pending` 会在读取时兼容为 `queued`。
+
 ## 8. 备份
 
 ### 8.1 备份范围
@@ -205,6 +216,7 @@ curl -fsS http://127.0.0.1:3018/health
 至少备份：
 
 - 整个 `DATA_DIR`。
+- `instrument_status/history.parquet`；它包含从首次启用起积累的历史名称/ST/上市状态。
 - `.env` 和部署编排文件。
 - `tiers.yaml`（如有定制）。
 - 外置 Provider、插件和自定义代码。

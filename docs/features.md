@@ -26,7 +26,7 @@
 
 ## 📊 指标流水线(Indicators)
 
-原生 Polars 向量化,全 A 股一次扫表落盘 enriched Parquet(基础行情列),指标在读取时现算并带进程内快照缓存:
+原生 Polars 向量化,全 A 股一次扫表落盘 enriched Parquet(基础行情与证券时点状态列),指标在读取时现算并带进程内快照缓存:
 
 - **均线 / 趋势**:MA(5-60) · EMA · MACD · 动量 · 布林带
 - **震荡 / 波动**:RSI · KDJ · ATR · 年化波动率 · 振幅

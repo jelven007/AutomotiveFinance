@@ -118,6 +118,8 @@ def test_start_records_states_events_progress_and_worker_payload(
     run_id = created["run_id"]
 
     assert created["status"] == "queued"
+    assert created["kind"] == "mining"
+    assert created["source"] == "scheduled"
     assert progress_recorded.wait(1)
     assert manager.store.read_summary(run_id) == {"progress": progress}
     assert [event["type"] for event in manager.store.read_events(run_id)] == [

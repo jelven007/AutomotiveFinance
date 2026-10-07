@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from app.api import abnormal
 from app.jobs import daily_pipeline
 from app.market_time import CN_TZ
-from app.services import auction_snapshot, instrument_sync
+from app.services import alert_store, auction_snapshot, instrument_sync
 
 DAY = date(2026, 10, 9)
 NOW = datetime(2026, 10, 9, 9, 25, 12, tzinfo=CN_TZ)
@@ -217,6 +218,105 @@ def test_api_reads_requested_history_date(tmp_path, monkeypatch):
     assert [row["symbol"] for row in payload["rows"]] == ["600000.SH"]
 
 
+def test_failure_notification_persists_broadcasts_and_deduplicates(tmp_path, monkeypatch):
+    pushed: list[dict] = []
+    feishu_calls: list[tuple] = []
+    quote_service = SimpleNamespace(push_alerts=lambda events: pushed.extend(events))
+    monkeypatch.setattr(
+        auction_snapshot.preferences,
+        "get_feishu_webhook_url",
+        lambda: "https://open.feishu.cn/open-apis/bot/v2/hook/test",
+    )
+    monkeypatch.setattr(
+        auction_snapshot.preferences,
+        "get_feishu_webhook_secret",
+        lambda: "secret",
+    )
+    monkeypatch.setattr(
+        auction_snapshot.webhook_adapter,
+        "send_feishu",
+        lambda *args: feishu_calls.append(args) or False,
+    )
+    result = {
+        "state": "fetch_failed",
+        "trade_date": DAY.isoformat(),
+        "provider": "mootdx",
+        "message": "network timeout",
+    }
+
+    assert auction_snapshot.notify_capture_failure(
+        tmp_path,
+        result,
+        quote_service=quote_service,
+    )
+    assert not auction_snapshot.notify_capture_failure(
+        tmp_path,
+        result,
+        quote_service=quote_service,
+    )
+
+    events = alert_store.list_recent(
+        tmp_path,
+        source="market",
+        type="auction_capture_failed",
+    )
+    assert len(events) == 1
+    assert events[0]["trade_date"] == DAY.isoformat()
+    assert events[0]["failure_state"] == "fetch_failed"
+    assert events[0]["severity"] == "critical"
+    assert pushed == events
+    assert len(feishu_calls) == 1
+    assert feishu_calls[0][1] == "竞价采集失败"
+    assert "network timeout" in feishu_calls[0][2]
+
+
+@pytest.mark.parametrize("state", ["ready", "already_captured", "market_closed"])
+def test_failure_notification_ignores_non_failure_states(tmp_path, monkeypatch, state):
+    monkeypatch.setattr(
+        auction_snapshot.preferences,
+        "get_feishu_webhook_url",
+        lambda: "",
+    )
+    assert not auction_snapshot.notify_capture_failure(
+        tmp_path,
+        {"state": state, "trade_date": DAY.isoformat()},
+    )
+    assert alert_store.list_recent(tmp_path) == []
+
+
+def test_runner_notifies_only_when_requested(tmp_path, monkeypatch):
+    result = {
+        "state": "incomplete_snapshot",
+        "trade_date": DAY.isoformat(),
+        "coverage_ratio": 0.42,
+    }
+    notified: list[tuple] = []
+    repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
+    quote_service = object()
+    monkeypatch.setattr(
+        auction_snapshot,
+        "capture_auction_snapshot",
+        lambda data_dir: result,
+    )
+    monkeypatch.setattr(
+        auction_snapshot,
+        "notify_capture_failure",
+        lambda data_dir, value, *, quote_service=None: notified.append(
+            (data_dir, value, quote_service)
+        ),
+    )
+    monkeypatch.setattr(
+        daily_pipeline,
+        "_get_app_state",
+        lambda: SimpleNamespace(quote_service=quote_service),
+    )
+
+    daily_pipeline._run_auction_snapshot(repo)
+    daily_pipeline._run_auction_snapshot(repo, notify_on_failure=True)
+
+    assert notified == [(tmp_path, result, quote_service)]
+
+
 def test_scheduler_registers_retries_and_in_window_catchup(monkeypatch):
     calls: list[dict] = []
 
@@ -235,3 +335,24 @@ def test_scheduler_registers_retries_and_in_window_catchup(monkeypatch):
         "auction_snapshot_catchup",
     ]
     assert all(call["args"] == [repo] for call in calls)
+    assert [call["kwargs"]["notify_on_failure"] for call in calls] == [
+        False,
+        False,
+        True,
+        False,
+    ]
+
+
+def test_scheduler_marks_late_catchup_as_final_attempt(monkeypatch):
+    calls: list[dict] = []
+
+    class Scheduler:
+        def add_job(self, func, **kwargs):
+            calls.append({"func": func, **kwargs})
+
+    late = datetime(2026, 10, 9, 9, 25, 50, tzinfo=CN_TZ)
+    monkeypatch.setattr(daily_pipeline, "cn_now", lambda: late)
+    daily_pipeline._register_auction_jobs(Scheduler(), object())
+
+    catchup = next(call for call in calls if call["id"] == "auction_snapshot_catchup")
+    assert catchup["kwargs"] == {"notify_on_failure": True}

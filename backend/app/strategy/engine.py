@@ -1592,8 +1592,11 @@ class StrategyEngine:
             exprs.append(pl.col("turnover_rate") >= bf["turnover_min"])
         if bf.get("turnover_max") is not None and "turnover_rate" in df.columns:
             exprs.append(pl.col("turnover_rate") <= bf["turnover_max"])
-        if bf.get("exclude_st") and "name" in df.columns:
-            exprs.append(~pl.col("name").str.contains("(?i)ST|\\*ST|退"))
+        if bf.get("exclude_st"):
+            if "is_risk_warning" in df.columns:
+                exprs.append(~pl.col("is_risk_warning").fill_null(False))
+            elif "name" in df.columns:
+                exprs.append(~pl.col("name").str.contains("(?i)ST|\\*ST|退"))
         # 板块过滤
         boards = bf.get("boards")
         if boards and isinstance(boards, list) and len(boards) > 0:

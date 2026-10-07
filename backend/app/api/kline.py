@@ -1239,7 +1239,11 @@ async def trigger_minute_sync(repo, capset, *, override_days=None, extend_flag=N
     if not _minute_allowed(capset):
         raise HTTPException(status_code=403, detail="需要 Pro+ 权限")
     # 分钟K全市场同步是长任务(数据量是日K的 ~240 倍),用更宽松的卡死阈值
-    job_id, is_new = job_store.create(long_running=True)
+    job_id, is_new = job_store.create(
+        long_running=True,
+        kind="minute_sync",
+        request={"days": override_days, "extend": bool(extend_flag)},
+    )
     if not is_new:
         return {"status": "reused", "job_id": job_id}
 
@@ -1295,7 +1299,7 @@ async def trigger_minute_sync(repo, capset, *, override_days=None, extend_flag=N
             job_store.succeed(job_id, {"minute_rows": written, "universe_size": len(universe)})
             invalidate_storage_cache()
         except JobCancelledError:
-            # 已由 terminate() 标记失败, 拉取线程在分块回调处自行退出
+            job_store.cancelled(job_id)
             invalidate_storage_cache()
         except Exception as e:  # noqa: BLE001
             job_store.fail(job_id, str(e))
@@ -1451,7 +1455,10 @@ async def extend_history(request: Request):
         from app.services.pipeline_jobs import JobCancelledError, job_store, release_run_slot, run_with_capacity, try_acquire_run_slot
         from app.api.data import invalidate_storage_cache
 
-        job_id, is_new = job_store.create()
+        job_id, is_new = job_store.create(
+            kind="extend_history",
+            request={"value": value, "unit": unit},
+        )
         if not is_new:
             return {"status": "reused", "job_id": job_id}
 
@@ -1477,7 +1484,7 @@ async def extend_history(request: Request):
                     job_store.succeed(job_id, result)
                 invalidate_storage_cache()
             except JobCancelledError:
-                # 已由 terminate() 标记失败, 拉取线程在分块回调处自行退出
+                job_store.cancelled(job_id)
                 invalidate_storage_cache()
             except Exception as e:
                 logger.exception("extend_history failed: job_id=%s", job_id)
@@ -1532,7 +1539,10 @@ async def repair_daily(request: Request):
         from app.services.pipeline_jobs import JobCancelledError, job_store, release_run_slot, run_with_capacity, try_acquire_run_slot
         from app.api.data import invalidate_storage_cache
 
-        job_id, is_new = job_store.create()
+        job_id, is_new = job_store.create(
+            kind="repair_daily",
+            request={"start_date": start_date.isoformat()},
+        )
         if not is_new:
             return {"status": "reused", "job_id": job_id}
 
@@ -1563,7 +1573,7 @@ async def repair_daily(request: Request):
                     job_store.succeed(job_id, result)
                 invalidate_storage_cache()
             except JobCancelledError:
-                # 已由 terminate() 标记失败, 拉取线程在分块回调处自行退出
+                job_store.cancelled(job_id)
                 invalidate_storage_cache()
             except Exception as e:
                 logger.exception("repair_daily failed: job_id=%s", job_id)
@@ -1594,7 +1604,7 @@ async def rebuild_enriched(request: Request):
         from app.services.pipeline_jobs import JobCancelledError, job_store, release_run_slot, run_with_capacity, try_acquire_run_slot
         from app.api.data import invalidate_storage_cache
 
-        job_id, is_new = job_store.create()
+        job_id, is_new = job_store.create(kind="rebuild_enriched")
         if not is_new:
             return {"status": "reused", "job_id": job_id}
 
@@ -1647,7 +1657,7 @@ async def rebuild_enriched(request: Request):
                 })
                 invalidate_storage_cache()
             except JobCancelledError:
-                # 已由 terminate() 标记失败, 拉取线程在分块回调处自行退出
+                job_store.cancelled(job_id)
                 invalidate_storage_cache()
             except Exception as e:
                 logger.exception("rebuild_enriched failed: job_id=%s", job_id)
