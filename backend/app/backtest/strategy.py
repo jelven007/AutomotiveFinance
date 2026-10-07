@@ -276,6 +276,8 @@ class StrategyDependencyResolver:
             "signal_limit_up",
             "signal_limit_down",
         }
+        if "price_limit_pct" in required_features:
+            matrix_columns.add("price_limit_pct")
         return ResolvedFeaturePlan(
             base_columns=base_columns,
             intermediate_columns=frozenset(),

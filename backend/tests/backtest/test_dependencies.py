@@ -225,3 +225,32 @@ def test_matrix_native_resolves_raw_fields_and_protocol_warmup_without_indicator
     assert {"open", "high", "low", "close", "volume", "amount"} <= set(plan.base_columns)
     assert plan.warmup_bars == 120
     assert plan.full_feature_fallback is False
+
+
+def test_matrix_native_resolves_price_limit_pct_as_matrix_column():
+    class NativeStrategy:
+        def required_fields(self):
+            return frozenset({"close", "price_limit_pct"})
+
+        def required_warmup_bars(self, params):
+            return 60
+
+        def compute_signals(self, market, params):  # pragma: no cover - resolver only
+            raise AssertionError
+
+    strategy = _strategy(
+        filter_fn=None,
+        filter_history_fn=None,
+        execution_backend="matrix_native",
+        matrix_strategy=NativeStrategy(),
+        required_features=frozenset(),
+    )
+    plan = StrategyDependencyResolver().resolve(
+        strategy,
+        params={},
+        basic_filter={"enabled": False},
+        entry_signals=[],
+        exit_signals=[],
+    )
+
+    assert "price_limit_pct" in plan.matrix_columns
