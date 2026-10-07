@@ -1,10 +1,10 @@
-"""内置扩展数据预设 — 概念/行业启动时只创建配置, 等待用户手动获取 (#199)。
+"""内置扩展数据预设 — 概念/行业默认每 24 小时自动更新。
 
 设计原则:
   - 扩展数据通用逻辑零改动 (ExtConfig / fetch_and_ingest / API / 前端均不动)
   - 仅在本模块做「接口结构 → 本地 schema」的转换
   - 「已存在则跳过」: 绝不覆盖用户已有数据, 老用户零影响
-  - 拉取失败只记 warning, 不阻断启动 (保持「没数据也能跑」)
+  - 定时拉取由 PullScheduler 异步执行, 拉取失败不阻断启动
 
 种子数据来源 (概念/行业各自独立配置):
   - 概念: https://shy313.com/api/plugins/market_flow/exports/ths-concepts
@@ -55,16 +55,14 @@ def _concept_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属概念", "string", "所属概念"),
         ],
-        description="同花顺概念分类 (启动仅创建配置, 在概念/行业页手动获取)",
+        description="同花顺概念分类 (默认每 24 小时自动更新, 支持手动获取)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
             url=_CONCEPT_DATA_URL,
             method="GET",
             schedule_minutes=1440,
-            # enabled=False: ensure_builtin_presets 承诺启动不拉取, PullScheduler
-            # 只调度 enabled 配置; 手动获取走 fetch_preset 独立路径不受影响 (#199)
-            enabled=False,
+            enabled=True,
         ),
     )
 
@@ -86,15 +84,14 @@ def _industry_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属同花顺行业", "string", "所属同花顺行业"),
         ],
-        description="同花顺行业分类 (启动仅创建配置, 在概念/行业页手动获取)",
+        description="同花顺行业分类 (默认每 24 小时自动更新, 支持手动获取)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
             url=_INDUSTRY_DATA_URL,
             method="GET",
             schedule_minutes=1440,
-            # 同概念 preset: 出厂禁用, 避免启动即网络拉取 (#199)
-            enabled=False,
+            enabled=True,
         ),
     )
 
@@ -235,14 +232,14 @@ def get_preset(config_id: str) -> ExtConfig | None:
 
 
 async def ensure_builtin_presets(data_dir: Path) -> None:
-    """启动时: 为缺失的预设创建 config.json (含 pull 配置), 但【不拉取数据】。
+    """启动时为缺失的预设创建 config.json, 由调度器异步拉取。
 
-    设计: 数据获取改为用户在概念/行业页手动点「获取数据」触发, 避免启动时
-    网络请求阻塞, 也避免「自动拉取」与「用户自主控制」的预期冲突。
+    新建预设默认启用 24 小时周期拉取; PullScheduler 在启动后立即执行首轮,
+    后续按配置间隔更新。用户仍可在扩展数据设置中关闭自动拉取。
 
     安全保证:
       - 已存在则完全跳过 (绝不覆盖用户数据)
-      - 只写 config.json, 失败只记 warning 不阻断启动
+      - 本函数只写 config.json, 不直接发起网络请求
     """
     store = ExtConfigStore(data_dir)
 
@@ -253,7 +250,7 @@ async def ensure_builtin_presets(data_dir: Path) -> None:
             continue
         try:
             store.upsert(config)
-            logger.info("内置扩展表 %s 配置已就绪 (待用户手动获取数据)", config.id)
+            logger.info("内置扩展表 %s 配置已就绪 (默认每 24 小时自动更新)", config.id)
         except Exception as e:
             logger.warning("内置扩展表 %s 配置写入失败 (不影响启动): %s", config.id, e)
 

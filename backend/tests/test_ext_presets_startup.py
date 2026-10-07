@@ -1,12 +1,8 @@
-"""内置概念/行业 preset 启动不得自动拉取 (#199)。
+"""内置概念/行业 preset 默认启用每日自动拉取。
 
-ensure_builtin_presets 的契约是「只创建 config.json, 不拉取数据, 等待用户手动获取」;
-但 preset 出厂 PullConfig.enabled=True 会让 PullScheduler.refresh 在启动时立即调度
-_run_loop 并马上执行一次网络拉取 (启用后立即执行一次), 与契约矛盾。
-
-回归断言: 内置 preset 出厂 pull.enabled 必须为 False —— scheduler 的 enabled 过滤
-(ext_pull.refresh) 会因此跳过它们; 手动获取走 fetch_preset 独立路径, 不经过本开关
-(该路径行为由 test_ext_preset_dimension_values / test_ext_pull_refresh 覆盖)。
+ensure_builtin_presets 只负责创建配置, 不直接等待网络请求; 随后
+PullScheduler.refresh 会为 enabled 配置创建后台任务, 立即拉取一次并每 1440 分钟
+刷新。已有配置必须保持用户设置, 不因启动而被覆盖。
 """
 from __future__ import annotations
 
@@ -23,16 +19,17 @@ from app.services.ext_presets import (
 _PRESET_IDS = ("ext_gn_ths", "ext_hy_ths")
 
 
-def test_builtin_presets_ship_disabled() -> None:
-    """出厂 preset 的 pull.enabled 必须为 False, 否则启动即网络拉取 (#199)。"""
+def test_builtin_presets_ship_with_daily_pull_enabled() -> None:
+    """全新安装的内置 preset 默认每 24 小时自动拉取。"""
     for preset in (_concept_preset(), _industry_preset()):
         assert preset.pull is not None
-        assert preset.pull.url, "禁用归禁用, 手动获取仍需 url 配方"
-        assert preset.pull.enabled is False, f"{preset.id} 启动即自动拉取, 违反启动契约"
+        assert preset.pull.url
+        assert preset.pull.enabled is True
+        assert preset.pull.schedule_minutes == 1440
 
 
-def test_ensure_builtin_presets_writes_disabled_configs(tmp_path: Path) -> None:
-    """全新数据目录: 启动只落禁用的 pull 配置, scheduler 扫描后无任务可建。"""
+def test_ensure_builtin_presets_writes_enabled_configs(tmp_path: Path) -> None:
+    """全新数据目录写入启用的配置, 供调度器创建每日任务。"""
     asyncio.run(ensure_builtin_presets(tmp_path))
 
     store = ExtConfigStore(tmp_path)
@@ -40,20 +37,21 @@ def test_ensure_builtin_presets_writes_disabled_configs(tmp_path: Path) -> None:
         config = store.get(cid)
         assert config is not None, f"{cid} 配置未创建"
         assert config.pull is not None
-        assert config.pull.enabled is False
+        assert config.pull.enabled is True
+        assert config.pull.schedule_minutes == 1440
 
 
 def test_ensure_builtin_presets_keeps_existing_user_config(tmp_path: Path) -> None:
-    """老用户/已存在的配置一律不动: 即使保留 enabled=True 也不被覆盖。"""
+    """老用户/已存在的配置一律不动, 包括用户主动关闭自动拉取。"""
     asyncio.run(ensure_builtin_presets(tmp_path))
     store = ExtConfigStore(tmp_path)
     config = store.get("ext_gn_ths")
     assert config is not None and config.pull is not None
-    config.pull.enabled = True
+    config.pull.enabled = False
     store.upsert(config)
 
     asyncio.run(ensure_builtin_presets(tmp_path))
 
     refreshed = ExtConfigStore(tmp_path).get("ext_gn_ths")
     assert refreshed is not None and refreshed.pull is not None
-    assert refreshed.pull.enabled is True, "已存在配置被静默改写, 违反「绝不覆盖」原则"
+    assert refreshed.pull.enabled is False, "已存在配置被静默改写, 违反「绝不覆盖」原则"
