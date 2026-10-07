@@ -23,9 +23,10 @@ import { QK } from '@/lib/queryKeys'
 import { storage } from '@/lib/storage'
 import { fmtBigNum, fmtPct, priceColorClass } from '@/lib/format'
 import { cn } from '@/lib/cn'
-import { resolveDimension, type DimensionGroup, type StockRow } from '@/lib/analysis-adapter'
+import { pickBestDimensionConfig, resolveDimension, type DimensionGroup, type StockRow } from '@/lib/analysis-adapter'
 import { SectorRotationCard } from '@/components/SectorRotationCard'
 
+const PRESET_CONCEPT_ID = 'ext_gn_ths'
 const KEYWORDS = ['concept', '概念', 'theme', '题材', '板块']
 const CANDIDATE_FIELDS = ['concept', '概念', 'theme', '题材', '板块', 'concept_name', '概念名称']
 const PAGE_LIMIT = 12000
@@ -72,22 +73,6 @@ function loadConfig(): AnalysisFieldConfig {
 
 function saveConfig(c: AnalysisFieldConfig) {
   storage.conceptAnalysisConfig.set(c)
-}
-
-function pickBestConfig(
-  configs: { id: string; label: string; description?: string; fields: { name: string; label: string }[] }[],
-): string {
-  let best = ''
-  let bestScore = 0
-  for (const c of configs) {
-    const haystack = [c.id, c.label, c.description ?? '', ...c.fields.flatMap(f => [f.name, f.label])].join(' ').toLowerCase()
-    const score = KEYWORDS.reduce((n, k) => n + (haystack.includes(k) ? 1 : 0), 0)
-    if (score > bestScore) {
-      bestScore = score
-      best = c.id
-    }
-  }
-  return best
 }
 
 function symbolKeys(symbol: unknown): string[] {
@@ -255,9 +240,10 @@ export function ConceptAnalysis() {
   const availableConfigs = configsQuery.data?.items ?? []
   // 用户配置的 configId 可能已失效 (扩展数据被删除), 此时回退到自动选择,
   // 避免用失效 ID 请求接口报错; 用户仍可点配置按钮重新选择。
-  const preferredConfigId = fieldConfig.configId || pickBestConfig(availableConfigs)
+  const autoConfigId = pickBestDimensionConfig(availableConfigs, PRESET_CONCEPT_ID, KEYWORDS)
+  const preferredConfigId = fieldConfig.configId || autoConfigId
   const preferredConfig = availableConfigs.find(c => c.id === preferredConfigId)
-  const activeConfigId = preferredConfig ? preferredConfigId : pickBestConfig(availableConfigs)
+  const activeConfigId = preferredConfig ? preferredConfigId : autoConfigId
   const activeConfig = availableConfigs.find(c => c.id === activeConfigId)
 
   const rowsQuery = useQuery({
@@ -267,7 +253,6 @@ export function ConceptAnalysis() {
   })
 
   // 内置概念预设 (ext_gn_ths) 手动获取数据
-  const PRESET_CONCEPT_ID = 'ext_gn_ths'
   const queryClient = useQueryClient()
   const fetchMutation = useMutation({
     mutationFn: () => api.extDataPresetFetch(PRESET_CONCEPT_ID),

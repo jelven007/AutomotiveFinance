@@ -45,6 +45,42 @@ export interface ResolvedDimension {
   hint?: string
 }
 
+interface DimensionConfigCandidate {
+  id: string
+  label: string
+  description?: string
+  fields: { name: string; label: string }[]
+}
+
+export function pickBestDimensionConfig(
+  configs: DimensionConfigCandidate[],
+  presetId: string,
+  keywords: string[],
+): string {
+  const preset = configs.find(config => config.id === presetId)
+  if (preset) return preset.id
+
+  let best = ''
+  let bestScore = 0
+  for (const config of configs) {
+    const haystack = [
+      config.id,
+      config.label,
+      config.description ?? '',
+      ...config.fields.flatMap(field => [field.name, field.label]),
+    ].join(' ').toLowerCase()
+    const score = keywords.reduce(
+      (total, keyword) => total + (haystack.includes(keyword.toLowerCase()) ? 1 : 0),
+      0,
+    )
+    if (score > bestScore) {
+      bestScore = score
+      best = config.id
+    }
+  }
+  return best
+}
+
 // ===== 结构探测 =====
 
 const SEPARATORS = /[、,，;；|/\s]+/
