@@ -15,6 +15,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 
 from app.services.pipeline_jobs import JobStore
 
@@ -77,6 +80,26 @@ def test_orphan_running_record_is_reaped_on_next_boot(tmp_path):
     assert 0 <= j["duration_s"] <= 60
     # 同步历史列表可见
     assert any(x["id"] == jid for x in revived.list_recent())
+
+
+def test_module_import_reaps_orphan_before_global_store_creation(tmp_path):
+    """冷启动导入模块时, 全局 JobStore 可安全补录遗留任务。"""
+    d = tmp_path / "job_store"
+    dead = JobStore(store_dir=d)
+    jid, _ = dead.create(timeout_s=60)
+    dead.start(jid)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.services.pipeline_jobs"],
+        env={**os.environ, "DATA_DIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _read_disk(d, jid)["status"] == "interrupted"
 
 
 def test_orphan_queued_record_is_reaped(tmp_path):
