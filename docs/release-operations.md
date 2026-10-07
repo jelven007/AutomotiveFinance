@@ -25,8 +25,8 @@
 
 `main` 镜像只在同一提交的 CI 成功后构建并更新 `latest` 与提交 SHA 标签。
 `v*` tag 和手动触发会在 Docker workflow 内重新执行后端、前端质量门，通过后
-才构建镜像。Dockerfile 的 pnpm、npm 和 uv 安装均使用锁文件冻结模式，不允许
-锁文件不一致时退回非冻结解析。
+才构建镜像。Dockerfile 的 pnpm 与 uv 安装使用锁文件冻结模式，不允许锁文件
+不一致时退回非冻结解析；Codex CLI 使用固定版本构建参数。
 
 ## 3. 版本规则
 
