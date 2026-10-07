@@ -67,6 +67,22 @@ def test_market_level_flag_persists(client: TestClient):
     assert r.json()["market_level"] is False
 
 
+def test_schema_endpoints_normalize_configured_dtype_when_data_is_missing(client: TestClient):
+    _create(client, market_level=True)
+    expected = [
+        {"name": "state", "type": "string", "label": "state"},
+        {"name": "score", "type": "float", "label": "score"},
+    ]
+
+    schema = client.get("/api/ext-data/schema/regime_ts")
+    assert schema.status_code == 200, schema.text
+    assert schema.json()["columns"] == expected
+
+    schemas = client.get("/api/ext-data/schema-all")
+    assert schemas.status_code == 200, schemas.text
+    assert schemas.json()["items"][0]["columns"] == expected
+
+
 async def test_market_level_pull_skips_symbol_check(monkeypatch: pytest.MonkeyPatch):
     """拉取链路: 市场级表响应行无 symbol/code 也不报错 (标的表会 400)。"""
     from app.services import ext_pull

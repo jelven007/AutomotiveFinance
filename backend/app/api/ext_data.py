@@ -141,6 +141,14 @@ def _data_dir(request: Request) -> Path:
     return request.app.state.repo.store.data_dir
 
 
+def _configured_schema_columns(config: ExtConfig) -> list[dict]:
+    """Map stored field definitions to the public schema response contract."""
+    return [
+        {"name": field.name, "type": field.dtype, "label": field.label}
+        for field in config.fields
+    ]
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -1361,7 +1369,7 @@ def discover_schema(request: Request, config_id: str):
         return {"columns": [{"name": r[0], "type": r[1]} for r in rows]}
     except Exception:
         # 无数据时返回配置中定义的字段
-        return {"columns": [f.to_dict() for f in config.fields]}
+        return {"columns": _configured_schema_columns(config)}
 
 
 @router.get("/schema-all", response_model=contracts.ExtDataSchemasResponse)
@@ -1381,7 +1389,7 @@ def discover_all_schemas(request: Request):
             field_labels = {f.name: f.label for f in config.fields}
             columns = [{"name": r[0], "type": r[1], "label": field_labels.get(r[0], r[0])} for r in cols]
         except Exception:
-            columns = [f.to_dict() for f in config.fields]
+            columns = _configured_schema_columns(config)
 
         result.append({
             "id": config.id,
