@@ -169,15 +169,10 @@ def enrich_names_from_quotes(
 
     from app.services import preferences
 
-    as_of = (
-        df["as_of"].cast(pl.Date, strict=False).max()
-        if "as_of" in df.columns
-        else cn_today()
-    )
     update_instrument_history(
         data_dir,
         df,
-        as_of=as_of or cn_today(),
+        as_of=cn_today(),
         source=preferences.get_daily_data_provider(),
     )
     atomic_write_parquet(df, inst_path)

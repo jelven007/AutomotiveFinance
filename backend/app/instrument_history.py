@@ -16,7 +16,9 @@ import polars as pl
 from app.services.fs_utils import atomic_write_parquet
 
 HISTORY_RELATIVE_PATH = Path("instrument_status") / "history.parquet"
+HISTORY_SCHEMA_VERSION = 1
 HISTORY_SCHEMA: dict[str, pl.DataType] = {
+    "schema_version": pl.Int16,
     "symbol": pl.String,
     "valid_from": pl.Date,
     "valid_to": pl.Date,
@@ -318,10 +320,12 @@ def _normalize_history(frame: pl.DataFrame) -> pl.DataFrame:
     additions: list[pl.Expr] = []
     for name, dtype in HISTORY_SCHEMA.items():
         if name not in frame.columns:
-            additions.append(pl.lit(None).cast(dtype).alias(name))
+            default = 0 if name == "schema_version" else None
+            additions.append(pl.lit(default).cast(dtype).alias(name))
     if additions:
         frame = frame.with_columns(additions)
     normalized = frame.select(
+        pl.col("schema_version").cast(pl.Int16, strict=False).fill_null(0),
         pl.col("symbol").cast(pl.String),
         _date_expr(frame, "valid_from").alias("valid_from"),
         _date_expr(frame, "valid_to").alias("valid_to"),
@@ -366,6 +370,7 @@ def _history_row(
     available_at: str,
 ) -> dict[str, Any]:
     return {
+        "schema_version": HISTORY_SCHEMA_VERSION,
         "symbol": symbol,
         "valid_from": as_of,
         "valid_to": None,

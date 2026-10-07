@@ -181,6 +181,7 @@ def test_quote_name_enrichment_updates_same_day_history(tmp_path, monkeypatch) -
         "app.services.preferences.get_daily_data_provider",
         lambda: "mootdx",
     )
+    monkeypatch.setattr(instrument_sync, "cn_today", lambda: date(2026, 7, 2))
 
     assert instrument_sync.enrich_names_from_quotes(
         tmp_path,
