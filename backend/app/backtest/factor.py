@@ -99,6 +99,7 @@ class FactorResult:
     yearly_ic: list[dict] = field(default_factory=list)
     ic_decay: list[dict] = field(default_factory=list)
     regime_stats: list[dict] = field(default_factory=list)
+    provenance: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -155,6 +156,7 @@ class FactorBatchResult:
     n_symbols: int = 0
     n_dates: int = 0
     error: str | None = None
+    provenance: dict = field(default_factory=dict)
 
 
 class FactorBacktestService:
@@ -181,19 +183,37 @@ class FactorBacktestService:
         t0 = time.perf_counter()
         run_id = uuid.uuid4().hex[:10]
         generation = self._data_generation(config.asset_type)
+        result_config = self._config_to_dict(config)
+        from app.services.data_release import backtest_provenance
+
+        provenance = backtest_provenance(
+            self._fundamentals_data_dir() or Path("."),
+            asset_type=config.asset_type,
+            config=result_config,
+            data_generation=generation,
+        )
         panel = self._load_factor_panel(
             config,
             [config.factor_name],
             expected_generation=generation,
         )
         if panel.is_empty():
-            return self._error_result(config, run_id, t0, "无数据, 请检查日期范围或先运行盘后管道")
+            result = self._error_result(
+                config,
+                run_id,
+                t0,
+                "无数据, 请检查日期范围或先运行盘后管道",
+            )
+            result.provenance = provenance
+            return result
 
         if config.factor_name in FUNDAMENTAL_FACTOR_NAMES and self._fundamentals_missing():
-            return self._error_result(
+            result = self._error_result(
                 config, run_id, t0,
                 "本地没有财务数据: 请先在数据页同步财务数据后再使用财务因子",
             )
+            result.provenance = provenance
+            return result
 
         trading_dates = self._global_trading_dates(config)
         self._assert_data_generation(config.asset_type, generation)
@@ -207,7 +227,7 @@ class FactorBacktestService:
             if regime_by_date is not None
             else {}
         )
-        return self._evaluate_panel(
+        result = self._evaluate_panel(
             panel,
             config,
             run_id,
@@ -215,6 +235,8 @@ class FactorBacktestService:
             market_trading_dates=trading_dates,
             **evaluate_kwargs,
         )
+        result.provenance = provenance
+        return result
 
     def run_batch(
         self,
@@ -238,14 +260,23 @@ class FactorBacktestService:
         run_id = uuid.uuid4().hex[:10]
         factor_names = list(dict.fromkeys(config.factor_names))
         result_config = self._batch_config_to_dict(config, factor_names)
+        generation = self._data_generation(config.asset_type)
+        from app.services.data_release import backtest_provenance
+
+        provenance = backtest_provenance(
+            self._fundamentals_data_dir() or Path("."),
+            asset_type=config.asset_type,
+            config=result_config,
+            data_generation=generation,
+        )
         if not factor_names:
             return FactorBatchResult(
                 run_id=run_id,
                 config=result_config,
                 error="至少选择一个因子",
+                provenance=provenance,
             )
 
-        generation = self._data_generation(config.asset_type)
         panel = self._load_factor_panel(
             config,
             factor_names,
@@ -257,6 +288,7 @@ class FactorBacktestService:
                 config=result_config,
                 error="无数据, 请检查日期范围或先运行盘后管道",
                 elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                provenance=provenance,
             )
 
         # P1: 预计算共享下期收益 (仅依赖 close/date/symbol), 避免每个因子重复 shift/调仓日 JOIN。
@@ -371,6 +403,7 @@ class FactorBacktestService:
             elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
             n_symbols=n_symbols,
             n_dates=n_dates,
+            provenance=provenance,
         )
 
     def _data_generation(self, asset_type: str) -> str | None:

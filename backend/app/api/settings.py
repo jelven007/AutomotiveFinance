@@ -423,8 +423,8 @@ def _realtime_allowed() -> bool:
 def _minute_history_days() -> int | None:
     """当前分钟源的 1 分钟历史深度(交易日); None = 深历史(tickflow 基准)。
 
-    provider 可选类属性 minute_history_days 声明 (如 stock-sdk = 5,
-    免费分时接口只保留最近 5 个交易日); 未声明或走 tickflow 时视为深历史。
+    provider 可选类属性 minute_history_days 声明具体历史深度;
+    未声明或走 tickflow 时视为深历史。
     前端分时档位/默认值据此收窄。
     """
     from app.services import kline_sync, preferences
@@ -833,6 +833,14 @@ def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
         trading_day.reset_cache()
     # 刷新能力快照: 当前 provider 变化会改变自定义源能力增广结果 (读缓存, 无网络请求)
     request.app.state.capabilities = detect_capabilities()
+    from app.services.provider_audit import audit_provider_routes
+
+    request.app.state.provider_audit = audit_provider_routes()
+    if request.app.state.provider_audit["status"] != "ok":
+        logger.warning(
+            "data provider audit after settings update: %s",
+            request.app.state.provider_audit,
+        )
     return {
         "daily_data_provider": preferences.get_daily_data_provider(),
         "adj_factor_provider": preferences.get_adj_factor_provider(),

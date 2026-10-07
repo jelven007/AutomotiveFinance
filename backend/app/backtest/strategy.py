@@ -596,6 +596,56 @@ class StrategyBacktestResult:
     factor_attribution: dict | None = None
     elapsed_ms: float = 0.0
     error: str | None = None
+    provenance: dict = field(default_factory=dict)
+
+
+def _strategy_definition_hash(
+    strategy: StrategyDef,
+    strategy_engine: StrategyEngine,
+) -> str:
+    """Hash one strategy and local dependencies, including composite children."""
+    digest = hashlib.sha256()
+    visited: set[str] = set()
+
+    def visit(item: StrategyDef) -> None:
+        strategy_id = str(item.meta.get("id") or "")
+        if strategy_id in visited:
+            return
+        visited.add(strategy_id)
+        digest.update(strategy_id.encode("utf-8"))
+        digest.update(
+            json.dumps(
+                {
+                    "meta": item.meta,
+                    "basic_filter": item.basic_filter,
+                    "entry_signals": item.entry_signals,
+                    "exit_signals": item.exit_signals,
+                    "stop_loss": item.stop_loss,
+                    "trailing_stop": item.trailing_stop,
+                    "max_hold_days": item.max_hold_days,
+                    "execution_backend": item.execution_backend,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        )
+        if item.file_path is not None:
+            paths = [item.file_path]
+            paths.extend(sorted(item.file_path.parent.glob("_*.py")))
+            for path in paths:
+                try:
+                    content = path.read_bytes()
+                except OSError:
+                    continue
+                digest.update(path.name.encode("utf-8"))
+                digest.update(content)
+        if item.composite is not None:
+            for child in item.composite.children:
+                visit(strategy_engine.get(child.strategy_id))
+
+    visit(strategy)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -1065,15 +1115,34 @@ class StrategyBacktestService:
         t0 = time.perf_counter()
         run_id = uuid.uuid4().hex[:10]
         result_policy = result_policy or BacktestResultPolicy()
+        config_dict = self._config_to_dict(config)
+        from app.services.data_release import backtest_provenance
+
+        data_dir = getattr(
+            getattr(getattr(self.engine, "repo", None), "store", None),
+            "data_dir",
+            settings.data_dir,
+        ) or settings.data_dir
+        try:
+            data_generation = self.engine.data_generation(config.asset_type)
+        except Exception:
+            data_generation = None
+        provenance = backtest_provenance(
+            data_dir,
+            asset_type=config.asset_type,
+            config=config_dict,
+            data_generation=data_generation,
+        )
         # 因子归因快照容器: 日线路径在 _apply_score 里填充, 其余路径保持空
         factor_snapshot: dict = {}
 
         def _err(msg: str) -> StrategyBacktestResult:
             return StrategyBacktestResult(
                 run_id=run_id,
-                config=self._config_to_dict(config),
+                config=config_dict,
                 error=msg,
                 elapsed_ms=(time.perf_counter() - t0) * 1000,
+                provenance=provenance,
             )
 
         # 获取策略定义
@@ -1089,6 +1158,10 @@ class StrategyBacktestService:
             )
         except ValueError as e:
             return _err(str(e))
+        provenance["strategy_hash"] = _strategy_definition_hash(
+            s,
+            self.strategy_engine,
+        )
 
         params = self._normalize_params(config.params or {}, s)
         overrides = config.overrides or {}
@@ -1162,6 +1235,7 @@ class StrategyBacktestService:
                 result_policy=result_policy,
                 run_id=run_id,
                 t0=t0,
+                provenance=provenance,
             )
 
         try:
@@ -1661,9 +1735,10 @@ class StrategyBacktestService:
         if cancel_event is not None and cancel_event.is_set():
             return StrategyBacktestResult(
                 run_id=run_id,
-                config=self._config_to_dict(config),
+                config=config_dict,
                 error="cancelled",
                 elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                provenance=provenance,
             )
 
         if result.stats.get("error"):
@@ -1741,7 +1816,7 @@ class StrategyBacktestService:
 
         return StrategyBacktestResult(
             run_id=run_id,
-            config=self._config_to_dict(config),
+            config=config_dict,
             stats=selected_stats,
             equity_curve=result.equity_curve if result_policy.include_curves else [],
             drawdown_curve=result.drawdown_curve if result_policy.include_curves else [],
@@ -1759,6 +1834,7 @@ class StrategyBacktestService:
             strategy_info=strategy_info,
             factor_attribution=factor_attribution,
             elapsed_ms=round(elapsed, 1),
+            provenance=provenance,
         )
 
     # ── 分钟策略回测: 逐日回放入场 + 日K矩阵离场 ──
@@ -1783,13 +1859,17 @@ class StrategyBacktestService:
         result_policy: BacktestResultPolicy,
         run_id: str,
         t0: float,
+        provenance: dict,
     ) -> StrategyBacktestResult:
+        config_dict = self._config_to_dict(config)
+
         def _err(msg: str) -> StrategyBacktestResult:
             return StrategyBacktestResult(
                 run_id=run_id,
-                config=self._config_to_dict(config),
+                config=config_dict,
                 error=msg,
                 elapsed_ms=(time.perf_counter() - t0) * 1000,
+                provenance=provenance,
             )
 
         if config.asset_type != "stock":
@@ -1847,9 +1927,10 @@ class StrategyBacktestService:
         if cancel_event is not None and cancel_event.is_set():
             return StrategyBacktestResult(
                 run_id=run_id,
-                config=self._config_to_dict(config),
+                config=config_dict,
                 error="cancelled",
                 elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                provenance=provenance,
             )
         if not replay.hits:
             skipped_hint = (
@@ -1967,9 +2048,10 @@ class StrategyBacktestService:
         if cancel_event is not None and cancel_event.is_set():
             return StrategyBacktestResult(
                 run_id=run_id,
-                config=self._config_to_dict(config),
+                config=config_dict,
                 error="cancelled",
                 elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                provenance=provenance,
             )
         if result.stats.get("error"):
             return _err(result.stats["error"])
@@ -2040,7 +2122,7 @@ class StrategyBacktestService:
         elapsed = (time.perf_counter() - t0) * 1000
         return StrategyBacktestResult(
             run_id=run_id,
-            config=self._config_to_dict(config),
+            config=config_dict,
             stats=selected_stats,
             equity_curve=result.equity_curve if result_policy.include_curves else [],
             drawdown_curve=result.drawdown_curve if result_policy.include_curves else [],
@@ -2053,6 +2135,7 @@ class StrategyBacktestService:
             ),
             strategy_info=strategy_info,
             elapsed_ms=round(elapsed, 1),
+            provenance=provenance,
         )
 
     # ── 全量模拟 (选股能力统计, 不建组合不算净值) ──
@@ -2533,6 +2616,7 @@ class StrategyBacktestService:
             "holding_days": c.holding_days,
             "minute_fill": c.minute_fill,
             "regime_filter": c.regime_filter,
+            "asset_type": c.asset_type,
         }
 
     @staticmethod

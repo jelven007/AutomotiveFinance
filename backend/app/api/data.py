@@ -746,6 +746,9 @@ def clear_data(request: Request):
 
     logger.info("数据已清除: 删除 %d 个 parquet 文件", deleted)
     invalidate_data_cache(None)
+    from app.services.data_release import publish_data_release
+
+    publish_data_release(data_dir, reason="data_clear")
     return {"deleted_files": deleted}
 
 

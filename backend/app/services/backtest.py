@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import uuid
@@ -104,6 +105,7 @@ class BacktestResult:
     equity_curve: list[dict]      # [{date, value}]
     trades: list[dict]            # [{symbol, entry_date, exit_date, pnl_pct, ...}]
     per_symbol_stats: list[dict]  # 每只股票的统计
+    provenance: dict = field(default_factory=dict)
 
 
 # enriched 表里的信号列名映射
@@ -250,16 +252,26 @@ class BacktestService:
     def _run(self, config: BacktestConfig) -> BacktestResult:
         vbt = _get_vbt()
         run_id = uuid.uuid4().hex[:10]
+        config_dict = _config_to_dict(config)
+        from app.services.data_release import backtest_provenance
+
+        data_dir = getattr(getattr(self.repo, "store", None), "data_dir", settings.data_dir)
+        provenance = backtest_provenance(
+            data_dir,
+            asset_type=config.asset_type,
+            config=config_dict,
+        )
 
         panel = self._load_panel(config.symbols, config.start, config.end, config.asset_type)
         if panel.empty:
             return BacktestResult(
                 run_id=run_id,
-                config=_config_to_dict(config),
+                config=config_dict,
                 stats={"error": "no data"},
                 equity_curve=[],
                 trades=[],
                 per_symbol_stats=[],
+                provenance=provenance,
             )
 
         # 价格面板
@@ -282,11 +294,12 @@ class BacktestService:
         if not entries.any().any():
             return BacktestResult(
                 run_id=run_id,
-                config=_config_to_dict(config),
+                config=config_dict,
                 stats={"error": "no buy signals"},
                 equity_curve=[],
                 trades=[],
                 per_symbol_stats=[],
+                provenance=provenance,
             )
 
         # T+1 适配:vectorbt 默认信号当根 K 撮合
@@ -323,11 +336,12 @@ class BacktestService:
             logger.exception("vectorbt backtest failed")
             return BacktestResult(
                 run_id=run_id,
-                config=_config_to_dict(config),
+                config=config_dict,
                 stats={"error": str(e)},
                 equity_curve=[],
                 trades=[],
                 per_symbol_stats=[],
+                provenance=provenance,
             )
 
         # 提取结果
@@ -381,11 +395,12 @@ class BacktestService:
 
         result = BacktestResult(
             run_id=run_id,
-            config=_config_to_dict(config),
+            config=config_dict,
             stats={k: _json_safe(v) for k, v in stats_dict.items()},
             equity_curve=equity_curve,
             trades=trades,
             per_symbol_stats=per_symbol,
+            provenance=provenance,
         )
 
         # 落盘
@@ -393,15 +408,33 @@ class BacktestService:
         return result
 
     def _persist(self, result: BacktestResult) -> None:
-        out_dir = settings.data_dir / "backtest_results"
+        data_dir = getattr(getattr(self.repo, "store", None), "data_dir", settings.data_dir)
+        out_dir = data_dir / "backtest_results"
         out_dir.mkdir(parents=True, exist_ok=True)
         # 用 polars 写一份汇总
         summary = pl.DataFrame({
             "run_id": [result.run_id],
-            "stats_json": [str(result.stats)],
+            "stats_json": [json.dumps(result.stats, ensure_ascii=False, sort_keys=True)],
+            "provenance_json": [
+                json.dumps(result.provenance, ensure_ascii=False, sort_keys=True)
+            ],
             "n_trades": [len(result.trades)],
         })
         summary.write_parquet(out_dir / f"run_id={result.run_id}.parquet")
+        from app.services.data_release import persist_backtest_manifest
+
+        persist_backtest_manifest(
+            data_dir,
+            kind="signal",
+            result={
+                "run_id": result.run_id,
+                "config": result.config,
+                "provenance": result.provenance,
+                "stats": result.stats,
+                "trades": result.trades,
+                "error": result.stats.get("error"),
+            },
+        )
 
     def get_result(self, run_id: str) -> BacktestResult | None:
         # Phase 1:只保留近似落盘,完整结果保存在内存的近期 cache 中
@@ -421,6 +454,9 @@ def _config_to_dict(c: BacktestConfig) -> dict:
         "fees_pct": c.fees_pct,
         "slippage_bps": c.slippage_bps,
         "matching": c.matching,
+        "rsi_oversold_threshold": c.rsi_oversold_threshold,
+        "rsi_overbought_threshold": c.rsi_overbought_threshold,
+        "asset_type": c.asset_type,
     }
 
 

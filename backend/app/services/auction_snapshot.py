@@ -390,6 +390,13 @@ def capture_auction_snapshot(
             _metadata_path(data_dir, day),
             json.dumps(metadata, ensure_ascii=False, sort_keys=True),
         )
+        from app.services.data_release import publish_data_release
+
+        release = publish_data_release(
+            data_dir,
+            reason=f"auction_snapshot:{day.isoformat()}",
+        )
+        metadata["data_release_id"] = release["release_id"]
         logger.info(
             "09:25 竞价快照完成: %s, universe=%d quotes=%d matched=%d",
             day, universe.height, quote_count, matched_count,

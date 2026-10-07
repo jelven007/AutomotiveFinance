@@ -97,6 +97,10 @@ git status --short
 后端全量测试包含 Tier A OpenAPI 契约快照。开放端点变化导致快照失败时，必须确认
 这是有意的兼容性变更，再更新快照和开放平台文档。
 
+`.github/workflows/docker.yml` 的 `main` 构建只接受成功的 CI `workflow_run`；
+tag 和手动构建会在 workflow 内重新运行同等的后端与前端质量门。镜像依赖安装
+使用 frozen lockfile，锁文件漂移直接失败。
+
 当前 CI 不自动执行以下检查，发布负责人需按变更风险补充：
 
 - 后端全仓 Ruff。

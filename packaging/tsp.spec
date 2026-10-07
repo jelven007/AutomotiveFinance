@@ -67,7 +67,6 @@ hiddenimports += collect_submodules("polars")
 # entry 又是 importlib 字符串动态导入 — 两条链路静态分析都看不见, 必须双声明:
 # datas 把清单 yaml 落盘 (frozen 下 plugins_dir() 恰好解析到 _internal/app/plugins),
 # hiddenimports 把 provider/client 塞进 PYZ。
-# 注: stocksdk 出于合规暂不进桌面包 (与 GHCR 镜像口径一致), 需要时仿照添加。
 datas += [
     (str(ROOT / "backend" / "app" / "plugins" / "fuyao" / "plugin.yaml"), "app/plugins/fuyao"),
 ]

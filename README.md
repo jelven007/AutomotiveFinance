@@ -207,7 +207,7 @@
 
 - **数据** Data — 本地数据画像与同步状态(维表/日K/除权/Enriched/指数/ETF/分钟K/财务),盘后管道与历史扩展；标的目录同步后以 SCD2 持续积累名称、ST/风险警示和上市状态
 - **扩展分析** (动态菜单) — 把任意第三方/扩展数据字段配成一级菜单,与内置数据同台分析
-- **设置** Settings — 数据源与能力检测(能力路由矩阵、档位徽章)、AI 接口、实时监控、扩展页面、开放接口(Token 管理)、菜单与系统设置
+- **设置** Settings — TickFlow / mootdx / fuyao 与自定义数据源、七类能力独立路由、RunningHub / OpenAI / DeepSeek / GLM / Codex CLI / 自定义 AI 接口、实时监控、扩展页面、开放接口(Token 管理)、菜单与系统设置
 
 **🤖 AI 助手**
 
@@ -366,8 +366,8 @@ flowchart TB
 | **后端**     | ![Python](https://img.shields.io/badge/Python_3.11+-3776AB?logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white) ![Pydantic](https://img.shields.io/badge/Pydantic_v2-E92063?logo=pydantic&logoColor=white) APScheduler · sse-starlette                                                                                                                                                                                                                                                                       |
 | **数据**     | ![Polars](https://img.shields.io/badge/Polars-CD882D?logo=polars&logoColor=white)（计算）· ![DuckDB](https://img.shields.io/badge/DuckDB-FFF100?logo=duckdb&logoColor=black)（查询）· Parquet（存储）                                                                                                                                                                                                                                                                                                                                                                     |
 | **回测**     | 自研仓位模拟引擎(T+1/费用/滑点/分钟回放)· vectorbt(部分路径)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| **数据源**   | [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 官方 SDK · [mootdx](https://github.com/mootdx/mootdx)(免费通达信协议) · fuyao(同花顺 REST) · 插件化扩展(stock-sdk 可选插件 · YAML 自定义源)                                                                                                                                                                                                                                                                                                                                                                     |
-| **AI**(可选) | ![OpenAI兼容](https://img.shields.io/badge/OpenAI兼容-412991?logo=openai&logoColor=white) DeepSeek / 通义 / Ollama 等 · 策略生成 / 报告 / **对话助手**(助手依赖工具调用能力, 需 OpenAI 兼容接口)                                                                                                                                                                                                                                                                                                                                                                          |
+| **数据源**   | [TickFlow](https://tickflow.org/auth/register?ref=V3KDKGXPEA) 官方 SDK · [mootdx](https://github.com/mootdx/mootdx)(免费通达信协议) · fuyao(同花顺 REST) · 插件化扩展(YAML 自定义源)                                                                                                                                                                                                                                                                                                                                                                                        |
+| **AI**(可选) | ![OpenAI兼容](https://img.shields.io/badge/OpenAI兼容-412991?logo=openai&logoColor=white) DeepSeek / GLM / Ollama 等 · 策略生成 / 报告 / **对话助手**(助手依赖工具调用能力, 需 OpenAI 兼容接口)                                                                                                                                                                                                                                                                                                                                                                             |
 | **MCP**      | [mcp-server](./mcp-server/README.md)(官方 SDK 2.x, stdio) — 12 工具按 scope 暴露,权限裁决复用开放网关                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **前端**     | ![React 18](https://img.shields.io/badge/React_18-61DAFB?logo=react&logoColor=black) ![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind-06B6D4?logo=tailwindcss&logoColor=white) Tanstack Query · [Lightweight Charts](https://www.tradingview.com/lightweight-charts/)(TradingView 开源) · ![ECharts](https://img.shields.io/badge/ECharts-AA344D?logo=apacheecharts&logoColor=white) · dnd-kit |
 | **部署**     | ![Docker](https://img.shields.io/badge/Docker_单容器-2496ED?logo=docker&logoColor=white) 两阶段构建,前端 dist 拷进后端镜像                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -516,7 +516,7 @@ docker run -d --name tsp -p 3018:3018 -v ${PWD}/data:/app/data ghcr.io/shy3130/t
 - 需要配置时:从 [.env.example](./.env.example) 复制出 `.env`,命令里加 `--env-file .env`。
 - 跑自己改过的代码:fork 后到仓库 **Actions** 页启用 workflow(fork 默认禁用),构建出的 `ghcr.io/<你的用户名>/tick-stock-panel` 用法相同。
 - 想用 compose 编排(挂载 `.env` / `tiers.yaml`):参考 [docker-compose.yml](./docker-compose.yml),把 `build:` 段换成 `image: ghcr.io/shy3130/tick-stock-panel:latest`。
-- 现成镜像默认不含 stock-sdk 插件与老 CPU 兼容内核(合规与体积考虑),有此需求请用方式 B 自构建,详见 [docs/deployment.md](./docs/deployment.md)。
+- 现成镜像默认不含老 CPU 兼容内核；有此需求请用方式 B 自构建，详见 [docs/deployment.md](./docs/deployment.md)。
 
 ### 方式 B:Docker Compose(本地构建,全套挂载)
 
@@ -527,7 +527,7 @@ docker compose up --build
 ```
 
 <details>
-<summary><b>🐳 Codex CLI 挂载、版本覆盖与插件开关(点开查看)</b></summary>
+<summary><b>🐳 Codex CLI 挂载与版本覆盖(点开查看)</b></summary>
 
 镜像内置固定版本的 **Codex CLI**，Compose 会将主机 `${HOME}/.codex` 只读挂载到容器，因此主机需先完成 Codex 登录。若主机 Codex 使用 loopback local-access provider，容器会保留实际端口并自动将主机名映射为 `host.docker.internal`。需要覆盖镜像内版本时可设置构建参数：
 
@@ -543,8 +543,6 @@ CODEX_CLI_VERSION=0.144.3 docker compose up --build
 > ```
 
 > Codex CLI 模式允许 TickFlow 容器读取本机 Codex 登录凭据，仅应在受信任的本机环境启用。凭据目录以只读方式挂载，不会写入镜像。
-
-镜像默认**不含** stock-sdk 插件(合规考虑);确需启用执行 `docker compose build --build-arg INCLUDE_STOCKSDK=1` 后再 `docker compose up -d`,详见 [docs/deployment.md](./docs/deployment.md)。
 
 </details>
 
@@ -638,7 +636,7 @@ PORT=3018                      # 服务端口
 | [docs/strategy-iteration.md](./docs/strategy-iteration.md)                                         | AI 策略迭代协议:台账 / 证据包 / 门槛判定 / 提示词卡片                |
 | [docs/mining.md](./docs/mining.md)                                                                 | 因子与策略挖掘口径、防泄漏、任务隔离和发布边界                       |
 | [docs/market-phase.md](./docs/market-phase.md)                                                     | 市场情绪周期 6 阶段与概念/行业主线识别的口径与设计                   |
-| [docs/plugin-development.md](./docs/plugin-development.md)                                         | 数据源插件开发规范(以 mootdx / fuyao / stock-sdk 为参考实现)         |
+| [docs/plugin-development.md](./docs/plugin-development.md)                                         | 数据源插件开发规范(以 mootdx / fuyao 为参考实现)                     |
 | [docs/secondary-development.md](./docs/secondary-development.md)                                   | 代码二次开发、前端插槽、后端策略接口与 AI 开发模板                   |
 | [backend/app/strategy/prompts/strategy-guide.md](./backend/app/strategy/prompts/strategy-guide.md) | 策略开发完整规范(AI 生成与手写)                                      |
 
@@ -681,8 +679,6 @@ PORT=3018                      # 服务端口
 内置数据源插件 [fuyao](https://fuyao.aicubes.cn/docs/api-reference/) 提供同花顺 REST 数据接口(行情 / 财务 / 龙虎榜 / 盘前风向标 / 交易日历等),需自备 API Key,使用前请遵守其服务条款
 
 内置数据源插件 [mootdx](https://github.com/mootdx/mootdx) 通过通达信公开行情协议提供无需 API Key 的沪深行情与财务能力；公开服务器的可用性、覆盖范围和数据授权责任需由使用者自行核验。
-
-数据源插件 [stock-sdk](https://stock-sdk.linkdiary.cn) 遵循其各自的 ISC 协议。
 
 ## 社区
 

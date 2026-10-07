@@ -11,9 +11,10 @@
 - 同一 `DATA_DIR` 只能由一个 TSP 主实例写入。
 - 默认服务端口为 `3018`。
 - Docker Compose 将主机 `./data` 挂载到容器 `/app/data`。
-- Compose 使用 `restart: unless-stopped`，但仓库当前没有容器级
-  `HEALTHCHECK` 和外部告警系统。
-- `GET /health` 是进程级浅探活，不验证 Provider、磁盘、调度任务或数据新鲜度。
+- Compose 使用 `restart: unless-stopped`；镜像内置容器 `HEALTHCHECK`，调用
+  `GET /health/ready`。外部告警系统仍由部署环境提供。
+- `GET /health` 和 `GET /health/live` 是进程级浅探活；
+  `GET /health/ready` 是本地依赖深度检查。
 - 本项目没有声明固定 SLA、RTO 或 RPO；部署者应通过实际恢复演练确定指标。
 
 ## 2. 上线前准备
@@ -103,6 +104,7 @@ curl -fsS http://127.0.0.1:3018/health
 
 ```bash
 curl -fsS http://127.0.0.1:3018/health
+curl -fsS http://127.0.0.1:3018/health/live
 ```
 
 正常响应包含：
@@ -115,8 +117,18 @@ curl -fsS http://127.0.0.1:3018/health
 }
 ```
 
-`mode` 会随数据源配置变化；示例值不是生产期望值。上线检查不能止于该接口，还应
-检查：
+深度就绪检查：
+
+```bash
+curl -fsS http://127.0.0.1:3018/health/ready
+```
+
+该接口检查仓库初始化、`DATA_DIR` 可写性、磁盘余量、调度器、Provider 路由审计、
+数据最新分区、最近盘后任务和当前 data release。关键检查失败返回 HTTP 503；
+非阻断漂移返回 HTTP 200 且 `status=degraded`。它不向外部 Provider 发网络请求，
+避免健康探针消耗额度。
+
+`mode` 会随数据源配置变化；示例值不是生产期望值。上线检查还应检查：
 
 1. 页面可加载并能登录。
 2. 设置页能力矩阵符合预期。
@@ -124,6 +136,9 @@ curl -fsS http://127.0.0.1:3018/health
 4. 最近一次盘后管道有成功终态。
 5. 实时行情、监控、AI 和通知等已启用能力分别可用。
 6. 数据目录可写且磁盘余量充足。
+
+使用 mootdx 时检查 `checks.providers.mootdx_only=true` 且
+`checks.providers.unavailable` 为空。混源只告警，不会被健康检查自动改写。
 
 ## 5. 日志与诊断证据
 
@@ -216,6 +231,7 @@ curl -fsS http://127.0.0.1:3018/health
 至少备份：
 
 - 整个 `DATA_DIR`。
+- `data_releases/` 全局发布历史；回测结果中的 release ID 依赖该历史做追溯。
 - `instrument_status/history.parquet`；它包含从首次启用起积累的历史名称/ST/上市状态。
 - `.env` 和部署编排文件。
 - `tiers.yaml`（如有定制）。

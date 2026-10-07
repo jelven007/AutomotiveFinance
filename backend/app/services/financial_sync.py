@@ -451,6 +451,12 @@ class FinancialScheduler:
                 return {}
             rows = fn(self._data_dir, self._capset)
             self._record_sync(table)
+            from app.services.data_release import publish_data_release
+
+            publish_data_release(
+                self._data_dir,
+                reason=f"financial_sync:{table}",
+            )
             return {table: rows}
         # 全部同步
         symbols = _get_symbols(self._data_dir)
@@ -461,6 +467,12 @@ class FinancialScheduler:
             )
             self._record_sync(t)
         _refresh_financials_views(self._data_dir)
+        from app.services.data_release import publish_data_release
+
+        publish_data_release(
+            self._data_dir,
+            reason="financial_sync:all",
+        )
         return result
 
     def run_now(self, table: str | None = None) -> dict[str, int]:

@@ -781,7 +781,7 @@ def _normalize_minute(df_in, default_symbol: str | None = None) -> pl.DataFrame:
     # datetime 列:优先用 timestamp(毫秒精度),其次 trade_time
     if "timestamp" in df.columns:
         # TickFlow 毫秒时间戳为 UTC 基准; 契约要求北京墙钟 naive
-        # (与 stock-sdk provider 归一口径一致, 见 CONTRIBUTING §3.3)
+        # (与自定义 provider 归一口径一致, 见 CONTRIBUTING §3.3)
         df = df.with_columns(
             pl.from_epoch(pl.col("timestamp").cast(pl.Int64), time_unit="ms")
             .dt.replace_time_zone("UTC")

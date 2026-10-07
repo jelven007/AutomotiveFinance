@@ -1,6 +1,6 @@
 # TickFlow Pro 限频安全预算（进程内 + 跨产品错峰）
 
-## 决策（经 ChatGPT/Codex 评析修订）
+## 决策（经 GPT/Codex 评析修订）
 - `backend/app/tickflow/rate_limits.py` 提供**单 Python 进程内**的 rpm 槽位限速与 `SAFETY_RPM_FACTOR=0.8`。
 - **不要**把「各进程各扣 80%」当成账户级共享限频：Gold Shadow 容器与 A 股面板进程状态独立，理论聚合可达 160%。
 - Stage A 期间跨产品靠**错峰**，不在 Gold 上部署分布式限频重构。

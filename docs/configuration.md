@@ -69,7 +69,7 @@ AI_DAILY_TOKEN_BUDGET=500000           # 每日 token 预算上限
 
 | 配置项 | 说明 |
 | :--- | :--- |
-| `AI_PROVIDER` | `openai_compat`(OpenAI 兼容,支持 DeepSeek / 通义 / OpenAI 等)或 `ollama`(本地模型) |
+| `AI_PROVIDER` | `openai_compat`(OpenAI 兼容,支持 DeepSeek / GLM / OpenAI 等)或 `ollama`(本地模型) |
 | `AI_BASE_URL` | 接口地址,如 DeepSeek `https://api.deepseek.com/v1` |
 | `AI_API_KEY` | 留空则关闭 AI 功能 |
 | `AI_MODEL` | 模型名,如 `deepseek-chat` |

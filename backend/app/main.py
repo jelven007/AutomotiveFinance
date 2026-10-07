@@ -151,6 +151,24 @@ async def _application_lifespan(app: FastAPI):
     app.state.capabilities = capset
     logger.info("ready; %d capabilities active", len(capset.all()))
 
+    # Publish a baseline manifest once and expose provider-route drift at startup.
+    # Both operations are local-only; no provider request is performed here.
+    try:
+        from app.services.data_release import ensure_current_release
+        from app.services.provider_audit import audit_provider_routes
+
+        app.state.data_release = ensure_current_release(store.data_dir)
+        app.state.provider_audit = audit_provider_routes()
+        if app.state.provider_audit["status"] != "ok":
+            logger.warning("data provider audit: %s", app.state.provider_audit)
+    except Exception as exc:
+        app.state.data_release = None
+        app.state.provider_audit = {
+            "status": "error",
+            "issues": [{"code": "provider_audit_failed", "message": str(exc)}],
+        }
+        logger.warning("data release/provider audit initialization failed: %s", exc)
+
     # 全局行情服务
     qs = QuoteService()
     app.state.quote_service = qs

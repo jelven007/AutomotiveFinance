@@ -17,15 +17,16 @@
 | 产物 | 自动化 | 触发 | 说明 |
 | --- | --- | --- | --- |
 | CI 结果 | `.github/workflows/ci.yml` | push/PR 到 `main` | 后端全量测试；前端 test、lint、build |
-| GHCR 镜像 | `.github/workflows/docker.yml` | `main`、`v*` tag、手动 | `linux/amd64`、`linux/arm64` |
+| GHCR 镜像 | `.github/workflows/docker.yml` | `main` CI 成功、`v*` tag、手动 | `linux/amd64`、`linux/arm64` |
 | 桌面安装包 | `.github/workflows/release.yml` | 手动 | Windows x64、macOS ARM64、Linux x64 |
 | GitHub Release | 桌面发布 workflow | 手动 | 允许分平台追加资产 |
 | 更新清单 | `latest.json` | 桌面产物后 | 仅列实际存在资产及 SHA-256 |
 | MCP 包 | `mcp-server/` | 独立维护 | 版本不必与主应用完全同步 |
 
-Docker workflow 会为 `main` 推送更新 `latest` 和 SHA 标签，`v*` tag 还会生成版本
-标签。该 workflow 与 CI 独立运行，镜像成功发布不代表 CI 已通过；正式推广前必须
-人工核对同一提交的 CI 状态。
+`main` 镜像只在同一提交的 CI 成功后构建并更新 `latest` 与提交 SHA 标签。
+`v*` tag 和手动触发会在 Docker workflow 内重新执行后端、前端质量门，通过后
+才构建镜像。Dockerfile 的 pnpm、npm 和 uv 安装均使用锁文件冻结模式，不允许
+锁文件不一致时退回非冻结解析。
 
 ## 3. 版本规则
 
@@ -111,7 +112,7 @@ rg -n '0\.3\.3|version' \
 
 1. 合并目标变更并记录候选提交 SHA。
 2. 等待该 SHA 的 CI 全部通过。
-3. 检查 Docker workflow 产出的 SHA 标签和多架构 manifest。
+3. 检查由该次 CI 成功事件触发的 Docker workflow、SHA 标签和多架构 manifest。
 4. 在隔离环境使用 SHA 标签启动，不使用本地未提交代码。
 5. 执行健康、登录、持久化、数据和核心研究烟测。
 
@@ -128,7 +129,7 @@ docker image inspect ghcr.io/shy3130/tick-stock-panel:<commit-sha>
 
 1. 完成发布前检查并冻结版本提交。
 2. 创建与版本一致的 `v*` tag。
-3. 确认 tag 对应的 Docker workflow 成功。
+3. 确认 tag 对应的 Docker workflow 质量门和镜像构建均成功。
 4. 使用版本 tag 在验收环境复测。
 5. 发布变更说明和升级/回滚指引。
 6. 生产环境按维护窗口备份并部署固定版本。
@@ -173,7 +174,7 @@ Silicon。workflow 会：
 2. 记录当前版本、配置摘要和镜像 digest。
 3. 停止写入并执行完整备份。
 4. 部署固定版本，只启动一个实例。
-5. 查看启动日志并执行 `GET /health`。
+5. 查看启动日志并执行 `GET /health/live` 与 `GET /health/ready`。
 6. 登录并执行能力矩阵、数据、策略、回测、监控、模拟盘和开放接口烟测。
 7. 恢复定时任务和外部流量。
 8. 进入观察期，保留上一版本和备份。

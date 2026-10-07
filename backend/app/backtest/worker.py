@@ -241,6 +241,15 @@ def _worker_entry(task: dict[str, Any], event_queue, cancel_event) -> None:
         else:
             raise ValueError(f"unsupported worker task kind: {kind}")
 
+        if kind == "backtest":
+            from app.services.data_release import persist_backtest_manifest
+
+            persist_backtest_manifest(
+                data_dir,
+                kind="strategy",
+                result=result,
+            )
+
         serialization_started = time.perf_counter()
         serialized_bytes = len(
             json.dumps(result, ensure_ascii=False, default=str).encode("utf-8")

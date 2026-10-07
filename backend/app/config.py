@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     # AI 输出上限 (max_tokens) 与输入上下文窗口上限 (约 token)。
     # 任务级 max_tokens 会被钳制到 ai_max_output_tokens; 输入估算超出上下文窗口时给出明确报错。
     # 钳制仅封顶不放大: 现有任务最多请求 4500, 上调默认值只影响用户自行调高任务上限的场景。
-    # 上下文 128000 对齐当前主流模型底线 (GPT/Claude/GLM/DeepSeek/Kimi 均 ≥128k); 可在 AI 设置里调整。
+    # 上下文 128000 对齐当前主流模型底线; 可在 AI 设置里调整。
     ai_max_output_tokens: int = 16384
     ai_context_window: int = 128000
     # AI 助手工具轮次检查点: 连续 N 轮工具调用未完成时弹「继续/停止」卡; 0=不检查。

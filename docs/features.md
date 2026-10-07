@@ -188,8 +188,7 @@ fuyao 仅提供可选的盘前风向标与收益对照，未配置时不影响�
 [mootdx](./mootdx-data-source.md) 插件和需 Key 的 fuyao 插件；也可用 YAML
 声明自有 HTTP 接口，或开发 Python/Node 插件。能力矩阵中的七类数据集
 (日K / 除权因子 / 实时行情 / 分钟K / 五档盘口 / 财务 / 全量分钟)
-分别独立选源，缺能力时明确失败，不会静默跨源补齐。stock-sdk 是可选示例插件，
-默认 Docker 镜像不安装其依赖。
+分别独立选源，缺能力时明确失败，不会静默跨源补齐。
 
 详见 [custom-data-source.md](./custom-data-source.md) 与 [plugin-development.md](./plugin-development.md)。
 

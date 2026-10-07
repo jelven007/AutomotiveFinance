@@ -188,7 +188,16 @@ def run_instruments_sync(repo: KlineRepository) -> dict:
     if rows > 0:
         repo.clear_cache()
         repo.refresh_cache()
-    return {"instruments_rows": rows}
+    from app.services.data_release import publish_data_release
+
+    release = publish_data_release(
+        repo.store.data_dir,
+        reason="instruments_sync",
+    )
+    return {
+        "instruments_rows": rows,
+        "data_release_id": release["release_id"],
+    }
 
 
 def run_now(
@@ -798,6 +807,13 @@ def run_now(
     if stage_errors:
         raise PipelineStageError(stage_errors)
 
+    from app.services.data_release import publish_data_release
+
+    release = publish_data_release(
+        repo.store.data_dir,
+        reason="daily_pipeline",
+    )
+    result["data_release_id"] = release["release_id"]
     return result
 
 

@@ -1,12 +1,14 @@
 name: Build and Push Docker Image
 
 # 触发:
-#   - push 到 main: 覆盖刷新 :latest + :sha(每次提交可追溯)
-#   - 打 v* tag:    额外产出带版本号的镜像(如 :v0.1.43), 便于固定回溯
-#   - 手动:         网页 Actions → Run workflow
+#   - main 的 CI 成功: 覆盖刷新 :latest + :sha
+#   - 打 v* tag / 手动: 先在本 workflow 重跑质量门, 再构建镜像
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
+  push:
     tags: ['v*']
   workflow_dispatch:
 
@@ -15,7 +17,57 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  backend-quality:
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --extra dev --frozen
+      - run: uv run pytest tests -q
+
+  frontend-quality:
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm lint
+      - run: pnpm build
+
   build-and-push:
+    needs: [backend-quality, frontend-quality]
+    if: >-
+      always() &&
+      (
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.conclusion == 'success'
+        ) ||
+        (
+          needs.backend-quality.result == 'success' &&
+          needs.frontend-quality.result == 'success'
+        )
+      )
     runs-on: ubuntu-latest
 
     permissions:
@@ -25,6 +77,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -45,8 +99,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
-            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ github.event.workflow_run.head_sha }},enable=${{ github.event_name == 'workflow_run' }}
+            type=sha,prefix=,enable=${{ github.event_name != 'workflow_run' }}
             type=ref,event=tag
 
       - name: Build and push Docker image

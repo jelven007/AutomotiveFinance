@@ -204,7 +204,7 @@ function RhPromoBanner() {
       rel="noreferrer"
       className="flex shrink-0 items-center gap-1 pr-8 text-[10px] leading-relaxed text-secondary transition-colors hover:text-foreground"
     >
-      <span className="font-medium text-amber-600 dark:text-amber-400">Claude、ChatGPT、Gemini</span>
+      <span className="font-medium text-amber-600 dark:text-amber-400">Claude、GPT、Gemini</span>
       <span>等国际模型直连稳定不掉线，</span>
       <span className="font-medium text-amber-600 dark:text-amber-400">最高优惠 80%</span>
       <span>，</span>

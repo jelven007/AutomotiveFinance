@@ -260,7 +260,7 @@ def normalize_openai_base_url(url: str) -> str:
     """Return the OpenAI-compatible base URL expected by the OpenAI SDK.
 
     识别 URL 中已有的版本段 (/v1、/v2、/v4 等) 时保持原样 —— 部分 OpenAI 兼容
-    服务用非 v1 的版本号 (如智谱 GLM 用 /api/paas/v4), 旧实现无条件补 /v1 会拼成
+    服务用非 v1 的版本号 (如 GLM 用 /api/paas/v4), 旧实现无条件补 /v1 会拼成
     不存在的 /api/paas/v4/v1/chat/completions 导致 404。仅在无版本段时才补 /v1。
     """
     base = (url or "").strip().rstrip("/")
@@ -777,7 +777,7 @@ def _format_openai_error(exc: Exception) -> str:
         503: "AI 服务暂时不可用, 请稍后重试",
         504: "AI 上游服务超时, 请稍后重试或检查 AI Base URL / 网络",
     }
-    # 优先透出上游真实错误 (如 Moonshot 的 "model not found"), 仅在没有
+    # 优先透出上游真实错误 (如 "model not found"), 仅在没有
     # 可读 detail 时才回落到按状态码的通用文案, 避免吞掉排障关键信息。
     message = detail or status_messages.get(status) or "请稍后重试或检查 AI 服务配置"
     if status:

@@ -44,6 +44,27 @@ def _get_engine(request: Request):
     return engine
 
 
+def _persist_backtest_trace(
+    request: Request,
+    *,
+    kind: str,
+    payload: dict,
+) -> None:
+    """Persist production results while keeping lightweight test doubles valid."""
+    if not isinstance(payload.get("provenance"), dict):
+        return
+    data_dir = getattr(
+        getattr(getattr(request.app.state, "repo", None), "store", None),
+        "data_dir",
+        None,
+    )
+    if data_dir is None:
+        return
+    from app.services.data_release import persist_backtest_manifest
+
+    persist_backtest_manifest(data_dir, kind=kind, result=payload)
+
+
 def _resolve_start(req: BaseModel, end: date, default_days: int) -> date:
     """未传 start 使用默认区间；显式传 null/空值表示全部历史。"""
     start = getattr(req, "start")
@@ -181,7 +202,9 @@ def factor_run(req: FactorBacktestRequest, request: Request):
         asset_type=req.asset_type,
     )
     result = svc.run(cfg)
-    return asdict(result)
+    payload = asdict(result)
+    _persist_backtest_trace(request, kind="factor", payload=payload)
+    return payload
 
 
 class FactorBatchRequest(BaseModel):
@@ -235,7 +258,9 @@ def factor_batch(req: FactorBatchRequest, request: Request):
         slippage_bps=req.slippage_bps,
         asset_type=req.asset_type,
     ))
-    return asdict(result)
+    payload = asdict(result)
+    _persist_backtest_trace(request, kind="factor_batch", payload=payload)
+    return payload
 
 
 # ================================================================

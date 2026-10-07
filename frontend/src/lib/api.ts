@@ -247,7 +247,7 @@ export interface AiStockReport {
 // ===== Kline =====
 export interface MinuteKlineRow {
   datetime: string
-  /** 分钟开盘价; 部分数据源(stock-sdk 历史日)无真实分钟 open, 为 null */
+  /** 分钟开盘价; 数据源未提供真实分钟 open 时为 null */
   open: number | null
   high: number
   low: number
@@ -1340,6 +1340,22 @@ export interface LimitLadderResult {
 }
 
 // ===== Backtest =====
+export interface BacktestProvenance {
+  schema_version: number
+  captured_at: string
+  dataset_release_id: string | null
+  dataset_release_created_at: string | null
+  dataset_release_reason: string | null
+  asset_type: string
+  data_generation: string | null
+  release_generation: string | null
+  release_consistent: boolean
+  providers: Record<string, string>
+  config_hash: string
+  strategy_hash: string | null
+  release_error: string | null
+}
+
 export interface BacktestResult {
   run_id: string
   config: any
@@ -1347,6 +1363,7 @@ export interface BacktestResult {
   equity_curve: { date: string; value: number }[]
   trades: any[]
   per_symbol_stats: { symbol: string; total_return: number }[]
+  provenance: BacktestProvenance
 }
 
 // ===== Factor Backtest =====
@@ -1456,6 +1473,7 @@ export interface FactorBacktestResult {
   n_symbols: number
   n_dates: number
   error: string | null
+  provenance: BacktestProvenance
 }
 
 export interface FactorBatchItem {
@@ -1487,6 +1505,7 @@ export interface FactorBatchResult {
   n_symbols: number
   n_dates: number
   error: string | null
+  provenance: BacktestProvenance
 }
 
 // ===== Factor / strategy mining =====
@@ -1825,6 +1844,7 @@ export interface StrategyBacktestResult {
   }
   elapsed_ms: number
   error: string | null
+  provenance: BacktestProvenance
 }
 
 // ===== Settings =====

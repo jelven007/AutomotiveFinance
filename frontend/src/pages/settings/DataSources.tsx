@@ -302,23 +302,7 @@ function CapabilityRoutingSection() {
     },
   })
 
-  const resetMut = useMutation({
-    mutationFn: () => api.updateDataProviders(DEFAULT_ROUTING),
-    onMutate: async () => {
-      await qc.cancelQueries({ queryKey: QK.capabilityMatrix })
-      await qc.cancelQueries({ queryKey: QK.preferences })
-      return applyOptimistic(DEFAULT_ROUTING)
-    },
-    onSuccess: () => toast('能力路由已恢复默认', 'success'),
-    onError: (e: Error, _v, ctx) => {
-      rollback(ctx)
-      toast(`恢复失败: ${e.message}`, 'error')
-    },
-    onSettled: invalidateRouting,
-  })
-
   const list = matrix.data?.capabilities ?? []
-  const anyCustom = list.some(c => c.current !== c.default)
 
   return (
     <section className="rounded-card border border-border bg-surface p-5">
@@ -328,16 +312,6 @@ function CapabilityRoutingSection() {
           <h2 className="text-sm font-medium text-foreground">能力路由</h2>
           <span className="text-[10px] text-muted/60 shrink-0">{list.length} 个能力</span>
         </div>
-        {anyCustom && (
-          <button
-            onClick={() => resetMut.mutate()}
-            disabled={resetMut.isPending}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-btn text-xs text-muted hover:text-foreground hover:bg-elevated transition-colors disabled:opacity-50 shrink-0"
-          >
-            <RefreshCw className={`h-3 w-3 ${resetMut.isPending ? 'animate-spin' : ''}`} />
-            恢复默认
-          </button>
-        )}
       </div>
       <p className="text-[11px] text-muted mb-4">
         每个能力独立选择提供方 — 点标签即刻生效。选项只列出当前可提供该能力的源
@@ -907,7 +881,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
         )}
 
         <div className="mt-3 flex items-center gap-3 text-[10px] text-muted/50 flex-wrap">
-          <span>芯片: 高亮=服务中 · 灰=已适配 · <Lock className="inline h-2.5 w-2.5" />=需更高档位</span>
+          <span>说明: 高亮=服务中 · 灰=已适配 · <Lock className="inline h-2.5 w-2.5" />=需更高档位</span>
           <span className="text-muted/30">·</span>
           <span>单击卡片查看介绍与配置, 点「套用」让该源接管其适配的全部能力</span>
         </div>

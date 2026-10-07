@@ -31,7 +31,7 @@ def test_normalize_openai_base_url_strips_chat_completions_path():
 
 
 def test_normalize_openai_base_url_preserves_glm_v4():
-    """智谱 GLM 用 /api/paas/v4, 不能强制补成 /v4/v1 (会 404)。"""
+    """GLM 用 /api/paas/v4, 不能强制补成 /v4/v1 (会 404)。"""
     assert normalize_openai_base_url("https://open.bigmodel.cn/api/paas/v4") == "https://open.bigmodel.cn/api/paas/v4"
 
 
@@ -133,12 +133,12 @@ def test_format_openai_error_falls_back_to_status_message_without_detail():
     assert message == "AI 服务请求失败(400): 请求参数无效, 请检查模型名称和上下文长度"
 
 
-def test_is_temperature_rejected_matches_moonshot_message():
-    """Moonshot 对 reasoning 模型报 'only 1 is allowed for this model'。"""
+def test_is_temperature_rejected_matches_upstream_message():
+    """兼容上游 reasoning 模型的 'only 1 is allowed for this model' 错误。"""
     response = httpx.Response(
         400,
         json={"error": {"message": "invalid temperature: only 1 is allowed for this model"}},
-        request=httpx.Request("POST", "https://api.moonshot.cn/v1/chat/completions"),
+        request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
     )
     exc = openai.BadRequestError(
         "bad request",
