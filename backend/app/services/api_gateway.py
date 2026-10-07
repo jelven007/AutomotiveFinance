@@ -4,8 +4,8 @@ evaluate() 是唯一入口: 认证中间件把 Bearer 明文交给它, 得到
 放行 / 401 / 403 / 429 的裁决与响应头。UI 会话完全不经过本模块。
 
 规则表按顺序匹配 (方法 + 路径前缀); 未命中 = 不对外开放 (403)。
-刻意不放进规则表的: SSE 流端点 (EventSource 无法带 Authorization 头,
-V2 用短期票据解决)、watchlist/监控规则管理、数据同步、设置 —— 保持最小开放面。
+SSE 使用 Bearer Token 换取 60 秒一次性票据, 再由 EventSource 携票据连接;
+watchlist/监控规则管理、数据同步、设置等管理面仍不开放给 Token。
 """
 from __future__ import annotations
 

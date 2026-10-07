@@ -14,6 +14,12 @@ TICKFLOW_API_KEY=              # 留空 = None 模式(历史日K免费);填 Key 
 
 TickFlow 是内置默认数据源;同时支持插件化接入第三方数据源(YAML 声明自有接口见 [custom-data-source.md](./custom-data-source.md),插件开发见 [plugin-development.md](./plugin-development.md)),在面板 **设置 → 数据源** 切换。
 
+仓库内置的 `mootdx` 插件无需 API Key，可提供日K、除权因子、实时行情、
+分钟K、五档盘口、财务和全量分钟七项能力；需要先在数据源卡片安装 Python
+依赖，再逐项路由。公开通达信服务器可能限流或不可达，安装、环境变量、
+单位校准、竞价采集及覆盖边界见 [mootdx 数据源](./mootdx-data-source.md)。
+选择任一非 TickFlow 源后，请求失败不会静默切回 TickFlow。
+
 - **留空(None 模式)**:通过 free-api 使用历史日 K(当日数据盘后 1-2 小时可用),**无需付费**即可体验核心选股/回测功能
 - **填入 API Key**:按你的订阅档位解锁更多能力
 

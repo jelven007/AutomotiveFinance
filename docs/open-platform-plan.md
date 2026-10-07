@@ -1,6 +1,10 @@
-# 核心能力开放与插件化改造设计方案
+# 核心能力开放与插件化改造说明
 
-> 状态: V1/V2 已实现（0.3.2）—— Token + scope 网关 + 限流、五个 scope 全量 Tier A、`/api/openapi.json?tier=a` 契约视图、设置页 Token 管理（「设置 → 开放接口」）。V3+（钩子契约、SSE 票据、模拟盘拆分）仍为设计。使用说明见 [features.md → 开放接口](./features.md#-开放接口open-api--tier-a)。
+> 状态: V1/V2 已实现，0.3.3 的 Tier A 当前包含 6 个 scope、65 个端点、
+> Token 限流、`/api/openapi.json?tier=a` 契约视图、设置页 Token 管理和
+> SSE 一次性票据。V3 的通用运行钩子与模拟盘插件化拆分仍为设计，模拟盘
+> 业务本身已在核心仓库实现。使用说明见
+> [features.md → 开放接口](./features.md#-开放接口open-api--tier-a)。
 > 遵循 [CONTRIBUTING.md](../CONTRIBUTING.md) 的数据口径、插件化与测试矩阵要求; 扩展机制现状见 [secondary-development.md](./secondary-development.md)。
 
 ## 1. 目标与非目标
@@ -9,7 +13,8 @@
 
 - 项目自身保留**核心域能力**（数据、策略/回测、监控推送、扩展数据存储）, 并以稳定 HTTP API 对外开放, 二次开发者不修改本项目源码即可在其上构建应用。
 - 外围能力**扩展域化**: 通过既有插件机制（数据源 plugin.yaml / 前端插槽 / 后端 custom / 扩展数据表）接入, 而不是长在核心里。
-- 开放有护栏: Token + scope 授权、按 Token 限流、CORS 白名单; 读开放、写受控。
+- 开放有护栏: Token + scope 授权、按 Token 限流；当前自托管部署允许跨域，
+  读能力开放、写能力受控。
 
 **非目标**
 
@@ -67,7 +72,9 @@
 
 ### 4.1 Token 体系
 
-- 存储沿用 secrets 模式: `data/user_data/tokens.json`（chmod 0600）: `{id, name, token_hash, scopes, created_at, last_used_at, revoked}`; 明文 Token 只在创建响应中出现一次（前缀 `tsp_` + 32 字节随机 hex）。
+- 存储沿用 secrets 模式: `data/user_data/api_tokens.json`（chmod 0600）:
+  `{id, name, token_hash, scopes, created_at, last_used_at, revoked}`；明文 Token
+  只在创建响应中出现一次（前缀 `tsp_` + 32 字节随机 hex）。
 - 认证通道与现有单密码**并行不替代**: 本机/内网 UI 登录照旧; `Authorization: Bearer tsp_...` 是外部调用方专用第二通道。
 - 中间件顺序: 访问密码门 → Token 识别（有 Bearer 头则走 Token 路径, 免密码会话）→ scope 校验 → 限流。
 
@@ -79,7 +86,7 @@
 | `read:analysis` | 策略列表与运行结果、回测报告与候选、市场环境、监控事件读取 | ❌ 显式勾选 |
 | `read:ext` | 扩展数据 rows/values/schema 读取 | ❌ 显式勾选 |
 | `write:ext` | 扩展表**行数据**程序化写入（`POST /api/ext-data/{id}/ingest`, 0.3.2 增） | ❌ 显式勾选 |
-| `run:backtest` | 触发回测/挖掘任务（受重活并发器约束） | ❌ 显式勾选 |
+| `run:backtest` | 触发选股、策略/单标的回测与因子检验（受重活并发器约束） | ❌ 显式勾选 |
 | `paper:trade` | 模拟盘下单/撤单/建户（写操作, 最高敏感级） | ❌ 显式勾选 |
 | `admin` | 管理接口 | ❌ **永不签发给 Token**, 仅 UI 会话可用 |
 
@@ -87,8 +94,10 @@
 
 ### 4.3 限流与 CORS
 
-- 按 Token 滑动窗口: 默认 120 req/min; 触发 429 + `Retry-After`。重活端点（回测/挖掘提交）另受既有 `heavy_job_limiter` 并发约束。
-- CORS: `OPEN_API_CORS_ORIGINS` 配置（逗号分隔白名单）, 默认空 = 不放行跨域; 放行后浏览器端二开可直接调用。
+- 按 Token 滑动窗口: 默认 120 req/min; 触发 429 + `Retry-After`。重活端点
+  （回测、选股和因子检验提交）另受既有并发约束。
+- CORS: 当前自托管模式允许所有来源，不携带跨域凭据；公网部署应在反向代理
+  进一步限制 Origin、TLS 和访问边界。
 - 响应头: `X-RateLimit-Remaining` / `X-RateLimit-Limit`。
 
 ## 5. 核心 API 清单（Tier A 契约）
@@ -100,10 +109,12 @@
 | 端点 | 说明 |
 |---|---|
 | `GET /api/kline/instruments/search` | 标的搜索（代码/名称/拼音首字母, 含 ETF/指数） |
-| `GET /api/kline/daily?symbol=&start=&end=` | 日K（前复权/不复权口径参数） |
-| `GET /api/intraday/...` | 分时/多日分时 |
-| `GET /api/index/...` | 指数行情与估值截面 |
-| `GET /api/overview/market-snapshot` | 全市场当日快照（一次拉取, 二开图表直供） |
+| `GET /api/kline/daily?symbol=&start_date=&end_date=` | 日K（前复权/不复权口径参数） |
+| `GET /api/kline/minute` `/minute-range` | 单日或区间分钟 K |
+| `GET /api/intraday/status` `/indices` | 实时服务状态与核心指数快照 |
+| `GET /api/index/daily` `/minute` | 核心指数日 K 与分钟 K |
+| `GET /api/overview/market` | 市场看板聚合 |
+| `GET /api/screener/market-snapshot` | 全市场当日快照 |
 
 ### 5.2 扩展数据（read:ext）
 
@@ -121,51 +132,58 @@
 | 端点 | 说明 |
 |---|---|
 | `GET /api/strategies` / `GET /api/strategies/{id}` | 策略清单与详情（参数定义、数据依赖） |
-| `POST /api/screener/run` | 运行策略选股（异步任务） |
-| `GET /api/screener/result...` | 运行结果（含扩展列） |
-| `POST /api/backtest` | 提交回测（含 regime_filter） → 任务 id |
-| `GET /api/backtest/{job}/status` / `GET .../report` | 任务状态 / 回测报告（指标、回合、净值序列） |
+| `POST /api/screener/run` `/run_preset` `/run_all` | 运行策略选股 |
+| `GET /api/screener/cached...` | 读取缓存结果与摘要 |
+| `POST /api/backtest/run` | 单标的回测 |
+| `POST /api/backtest/strategy/run` | 提交策略组合回测，进度经 SSE 流返回 |
+| `POST /api/backtest/factor/run` `/factor/batch` | 因子检验与批量检验 |
+| `GET /api/backtest/status` | 回测任务状态 |
 | `GET /api/backtest/candidates` | 持久化回测候选摘要 |
-| `GET /api/regime/states` 等 | 市场环境状态序列（内置 regime 的读取出口） |
+| `GET /api/regime/history` `/latest` `/states` `/coverage` `/phases` `/mainline` | 市场环境与主线读取 |
 
 ### 5.4 监控与事件（read:analysis）
 
 | 端点 | 说明 |
 |---|---|
 | `GET /api/alerts` | 告警/事件留痕查询 |
-| `GET /api/events/stream`（SSE） | 实时事件流（告警/成交/系统事件）; Token 以 query 参数短期票据接入（SSE 无法带 header） |
-| Webhook 订阅注册 | **V2 再做**: 按 Token 注册回调 URL + 事件类型 + 签名密钥（复用现有 custom webhook 通道能力） |
+| `POST /api/events/ticket` | Bearer Token 换取 60 秒一次性 SSE 票据 |
+| `GET /api/events?ticket=...`（SSE） | 按票据 scope 过滤的实时事件流 |
+| Webhook 订阅注册 | **未实现**；当前 Webhook 由管理页面统一配置，不向 Token 开放注册接口 |
 
 ### 5.5 模拟盘（paper:trade）
 
 | 端点 | 说明 |
 |---|---|
-| `GET /api/paper/accounts` `/overview` `/positions` `/nav` `/stats` `/compare` | 账户与账务读取 |
+| `GET /api/paper/account` `/accounts` `/overview` `/positions` `/nav` `/stats` `/compare` | 账户与账务读取 |
 | `POST /api/paper/orders` `DELETE /api/paper/orders/{id}` | 下单/撤单（写） |
 | `GET /api/paper/trades` | 成交台账（append-only 事实源） |
+| `POST /api/paper/account` `/settings` `/freeze` `/rebuild` | 建户、费用/撮合设置、冻结和账务重建 |
+| `GET/POST/DELETE /api/paper/auto_rules...` | 自动跟单规则查询、新建、启停和删除 |
+| `POST /api/paper/arena/batch_create` | 批量创建同口径对比账户 |
 
 ### 5.6 系统
 
 | 端点 | 说明 |
 |---|---|
 | `GET /api/health` | 探活（无鉴权, 白名单已有） |
-| `GET /api/auth/api-tokens`（UI 会话） | Token 管理: 列表/创建/吊销（管理页, 不属于开放面） |
+| `GET/POST/DELETE /api/settings/api-tokens...`（UI 会话） | Token 管理: 列表/创建/吊销（管理页, 不属于开放面） |
 | `GET /api/openapi.json?tier=a` | Tier A 契约视图（机器可读） |
 
 ### 5.7 通用约定
 
-- **分页**: `offset` + `limit`, 响应含 `total`; 列表端点统一 `items`/`rows` 字段名在契约化时逐一固定。
-- **错误**: FastAPI 默认 `{detail}`; 契约化后统一补 `code` 字段（Tier A 端点）。
+- **分页**: 支持分页的端点按各自 OpenAPI 参数使用 `offset` + `limit`；并非所有
+  列表端点都提供分页，调用方应以机器可读契约为准。
+- **错误**: 当前沿用 FastAPI `{detail}`；尚未统一业务错误码。
 - **日期**: 全部 `YYYY-MM-DD` / ISO 时间戳, 北京时间口径（与内部一致, 不做时区换算）。
 - **金额单位**: 元; 比例: 百分数数值（与各域现状一致, 契约文档逐一标注, 不强行统一）。
 
 ## 6. 分期路线
 
-### V1 开门（Token + 护栏 + 最小契约）— 建议立即
+### V1 开门（Token + 护栏 + 最小契约）— 已实现
 
 - ✅ Token 存储/创建/吊销 + 设置页管理 UI（「设置 → 开放接口」，`services/api_tokens.py`）。
 - ✅ 中间件: Bearer 识别 → scope 校验 → 限流（`services/api_gateway.py`，CORS 原本已全开）。
-- ✅ Tier A: 直接覆盖全部五个 scope（`api_gateway._RULES` 规则表）。
+- ✅ Tier A: 当前覆盖全部六个 scope（`api_gateway._RULES` 规则表）。
 - ✅ 测试矩阵: `backend/tests/test_api_gateway.py`（401/403/429/吊销即拒/前缀混淆防护）。
 
 ### V2 契约化 + 示例仓库
@@ -174,9 +192,11 @@
 - ✅ 示例脚本（0.3.2）: `examples/open-api/` 四个零依赖可运行示例（行情 / 写入扩展数据 / 回测 / 事件流）+ README; 独立示例仓库待有真实用户再拆。
 - ✅ SSE 短期票据落地（0.3.2）: `POST /api/events/ticket` 换 60s 一次性票据 → `GET /api/events?ticket=…`（`services/event_tickets.py` + `api/events.py`, 事件源已接告警触发）。
 
-### V3 钩子契约 + 模拟盘拆分试点
+### V3 钩子契约 + 模拟盘拆分试点 — 设计中
 
-- 核心提供 `盘中快照钩子` `盘后结算钩子` 事件契约, 模拟盘改为通过钩子接入 → 验证「核心 + 官方插件」拆分工程可行性（当前反向 import 30 处, 先立契约再搬）。
+- 模拟盘现已具备多账户、自动跟单、对比、盘中撮合和盘后结算，但仍直接挂在
+  `quote_service` 与 `daily_pipeline`。后续若要拆成官方插件，应先提供稳定的
+  `盘中快照钩子` 和 `盘后结算钩子`，再迁移现有实现。
 
 ### V4 市场级过滤契约（按需）
 
@@ -185,6 +205,7 @@
 ## 7. 风险与守住的边界
 
 - **Token 泄漏 = 面板数据泄漏**: 默认只读 scope、可随时吊销、创建时明文只显一次; paper:trade 永不默认。
-- **契约冻结过早**: Tier A 从最小两组起步, 按二开反馈逐域升级, 未验证的端点留在 Tier B。
+- **契约演进**: Tier A 当前由 65 端点快照测试冻结；新增、移除或改方法必须
+  显式更新契约快照，破坏性变更需提供版本迁移。
 - **限流误伤本机 UI**: Token 限流只作用于 Bearer 路径; UI 会话不受 Token 桶约束。
 - **不因开放破坏内部演进**: 开放面是「视图 + 网关」, 不重写内部路由; 内部 API 与开放 API 解耦, 由标注层衔接。

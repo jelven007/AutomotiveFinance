@@ -1,6 +1,7 @@
-# 虚拟账户（模拟盘）设计方案
+# 虚拟账户（模拟盘）实现说明
 
-> 状态: 设计稿（未实现）。本文档描述目标形态与实现路径, 供评审与分期开发。
+> 状态: V1/V2/V3 主流程已实现（0.3.3）。本文档记录当前实现、金融口径、
+> API 与剩余边界；不能把“模拟成交”理解为真实可成交性证明。
 > 遵循 [CONTRIBUTING.md](../CONTRIBUTING.md) 的数据口径、插件化与测试矩阵要求。
 
 ## 1. 目标与非目标
@@ -13,14 +14,14 @@
 **非目标**
 
 - 不接入券商、不做实盘下单、不提供任何资金通道。
-- 不做高频/tick 级撮合模拟（分钟/快照级足够）。
-- V1 不做多账户并行（数据结构预留, UI 只开放单账户）。
+- 不做高频/tick 级撮合模拟，当前为实时快照 + 日线开收盘价撮合。
+- 不提供真实资金、券商账户或实盘委托。
 
 ## 2. 核心概念与账务模型
 
 | 概念 | 说明 |
 |---|---|
-| Account 账户 | 初始虚拟资金 + 费用参数 + 状态(active/frozen/closed) |
+| Account 账户 | 初始虚拟资金 + 费用参数 + 状态(active/frozen)，支持多账户隔离 |
 | Order 订单 | 买/卖意向; 来源 manual / auto(规则触发); 含订单类型与时效 |
 | Fill 成交 | 订单的一次实际成交(价格、数量、费用); **append-only 台账** |
 | Position 持仓 | 由成交台账推导物化(avg_cost、可卖数量), 可随时重建 |
@@ -31,84 +32,98 @@
 
 ## 3. 数据模型与存储
 
-沿用 `app/strategy/lots.py` 的域模块模式: 每实体一个 JSON + `atomic_write_text` 原子写, 目录挂 `data_dir` 下, 跨请求写互斥(镜像 lots API 的 `_write_lock` 与「全部校验通过才落盘」)。
+沿用 `app/strategy/lots.py` 的域模块模式: 每实体一个 JSON +
+`atomic_write_text` 原子写，目录挂在 `data_dir` 下，API 下单、行情撮合和盘后
+结算共用域内 `RLock`。旧版单账户目录会在首次访问时幂等迁移到 `default` 账户。
 
 ```
 data/paper/
-  account.json                     # 单账户 V1: id, initial_cash, fees, status, created_at
-  orders/order_{id}.json           # 含 status: pending / filled / cancelled / expired
-  fills.jsonl                      # append-only 成交台账(每行一笔, 带序号与时间戳)
-  positions.json                   # 物化持仓(可由 fills.jsonl 重建, rebuild 接口兜底)
-  nav/daily.jsonl                  # 每交易日一条定版净值 {date, cash, mv, nav, benchmark_nav}
-  auto_rules/rule_{id}.json        # 自动跟单规则
+  accounts/{account_id}/
+    account.json                   # 初始资金、现金、费用、状态、涨跌停排队开关
+    orders/order_{id}.json         # pending / filled / cancelled / expired
+    fills.jsonl                    # append-only 成交与 corporate_action 台账
+    positions.json                 # 物化持仓，可由 fills.jsonl 重建
+    nav/daily.jsonl                # 每交易日一条定版净值，含可用时的沪深300收盘
+    auto_rules/arule_{id}.json     # 自动跟单规则
 ```
 
 关键字段口径:
 
 - **价格一律不复权 raw 价**(与真实交易一致); 持仓市值用 `raw_close`。
-- **除权处理**: 日终结算时检测持仓 symbol 当日有除权因子(`adj_factor_etf`/`adj_factor`), 按因子调整数量与成本(送转 → 数量乘因子、成本除因子; 现金分红 → cash 入账), 并记一条 `corporate_action` 冲正成交, 保证净值曲线连续。
+- **除权处理**: 日终结算时检测持仓 symbol 当日有除权因子
+  (`adj_factor_etf`/`adj_factor`)，按因子调整数量与成本并追加
+  `corporate_action` 台账。现有因子不含可可靠拆出的现金分红金额，因此现金分红
+  暂不单独入账。
 - **费用**: `commission_pct`(双边, 默认万 2.5, 最低 5 元)、`stamp_tax_pct`(卖出印花税, 默认千 1)、`slippage_bps`(默认 5)——与回测引擎 `app/backtest/engine.py` 的参数名和默认值完全一致, 用户心智一份口径。
 
 ## 4. 撮合规则(金融口径, 必须逐条测试)
 
 | 规则 | 口径 |
 |---|---|
-| 即时市价单(盘中) | 以订单创建后的**下一次实时快照价**成交 + 滑点; 非交易时段创建则转为次日开盘单 |
-| 次日开盘单 | 次一交易日 `raw_open` 成交 + 滑点; 当日无行情(停牌/新股)则顺延, 顺延满 N 日(默认 3)自动 expired 并留痕 |
-| 当日收盘单 | 当日 `raw_close` 成交(盘后管道执行) |
+| 即时市价单(盘中) | 以订单创建后的**下一次股票实时快照价**成交 + 滑点；当日未收到快照时由盘后结算按首个合格交易日收盘价兜底 |
+| 次日开盘单 | 订单创建后首个尚未打印的交易日 `raw_open` 成交 + 滑点；09:30 后创建的订单不会回填当日开盘 |
+| 当日收盘单 | 订单创建后首个尚未打印的交易日 `raw_close` 成交；15:00 后创建的订单不会回填当日收盘 |
 | 买入数量 | 100 股整数倍(ETF 同); 资金不足按可用现金向下取整到百股, 不足一手则拒绝 |
 | T+1 | 当日买入份额次日方可卖; `Position.available_qty` 在日终结算解锁 |
-| 涨跌停 | V1 简化: 触及涨停价的买单 / 跌停价的卖单直接 `expired`(留痕); V2 可选「排队次日重试」 |
+| 涨跌停 | 默认把触及涨停的买单 / 跌停的卖单置为 `expired` 并留痕；账户可开启「排队次日重试」，最多顺延 3 个交易日 |
 | 停牌 | 无法取价即不成交, 按顺延规则处理 |
 | 撤单 | 仅 `pending` 可撤; 已成交不可逆(只能反向平仓) |
 
-**时点约束**: 所有成交时间戳取北京墙钟(复用仓库既有北京时间口径); 交易日判断复用交易日探针, 非交易日不撮合不结算。
+ETF 不进入股票实时快照撮合池，因此 ETF 即时单会自动转为次日开盘单。
+所有时间戳取北京墙钟；盘后结算随交易日管道执行。
 
 ## 5. 运行时挂点(全部复用现有引擎)
 
 ```
-盘中:  quote_service._evaluate_monitors 的同一 tick
-       └─ paper_engine.evaluate(now)
-          ├─ 处理 pending 即时单(用实时快照价)
-          └─ 自动规则监听信号事件 → 生成订单(带 cooldown 去重, 复用监控事件去重思路)
+盘中:  quote_service._evaluate_monitors 的同一轮
+       ├─ 遍历全部账户，处理 pending 即时单(股票实时快照价)
+       └─ 自动规则监听策略/监控事件 → 生成订单(cooldown 去重)
 
-盘后:  daily_pipeline 新增 stage: paper_settle
-       ├─ 收盘价定版: 未成交的收盘单/顺延单撮合
+盘后:  daily_pipeline stage: paper_settle
+       ├─ 全账户撮合开盘单、收盘单及未成交即时单
        ├─ mark-to-market: 写 nav/daily 定版(含基准 000300.SH 同日收盘)
        ├─ 除权调整 + T+1 解锁
-       └─ 异常(缺行情/缺因子) warning 留痕, 不中断管道
+       └─ 异常 warning 留痕并软失败，不中断其他管道阶段
 ```
 
-- 自动跟单规则 V1 形态: `{signal_source: 策略id|信号id, side: buy, size_mode: fixed_amount|pct_equity, order_type: next_open, cooldown_days: 5, scope: 自选分组|全信号}`; 触发链路复用信号库/策略扫描的产出事件, 不新增采集。
-- 语音/推送: 成交与规则触发事件走监控中心既有 SSE + 语音播报 + 飞书通道(新增事件类型, 前端无需新管道)。
+- 自动跟单规则形态:
+  `{match_kind: strategy|rule, match_id, side, size_mode: fixed_amount|pct_equity, size_value, order_type, cooldown_days}`。
+- 自动下单和成交事件复用监控中心的告警存储、SSE、语音/系统通知及
+  Webhook/邮件通道，不新增一套推送管道。
 
 ## 6. API 设计(`/api/paper/*`, 薄胶水 + 域模块)
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET / PUT | `/api/paper/account` | 账户详情/费用参数(初始化向导) |
-| GET | `/api/paper/overview` | 现金 + 持仓(实时估值) + 今日订单/成交 + 盘中估算净值 |
+| GET / POST | `/api/paper/account` | 读取/创建账户；`account` 查询参数选择账户 |
+| GET | `/api/paper/accounts` | 账户列表与最新净值摘要 |
+| GET | `/api/paper/overview` | 现金、持仓、总资产与盘中估算净值 |
 | POST | `/api/paper/orders` | 手动下单 {symbol, side, qty \| amount, order_type} |
 | GET | `/api/paper/orders` | 订单列表(可按 status 过滤) |
 | DELETE | `/api/paper/orders/{id}` | 撤销 pending 订单 |
-| GET | `/api/paper/trades` | 成交台账(分页) |
+| GET | `/api/paper/trades` | 完整成交台账 |
 | GET | `/api/paper/nav` | 净值序列 + 基准(沪深300 归一化) |
-| GET | `/api/paper/stats` | 回合统计: 胜率/盈亏比/平均持有天数/最大回撤/对比基准 |
-| CRUD | `/api/paper/auto_rules` | 自动跟单规则 |
+| GET | `/api/paper/stats` | 回合统计: 胜率/盈亏比/平均持有天数/已实现盈亏/最大回撤 |
+| GET | `/api/paper/compare` | 全账户净值、收益、回合和跟单规则摘要 |
+| GET / POST / DELETE | `/api/paper/auto_rules` | 查询、新建、启停和删除自动跟单规则 |
+| POST | `/api/paper/settings` | 更新费用、滑点与涨跌停排队设置 |
+| POST | `/api/paper/freeze` | 冻结或解冻账户 |
 | POST | `/api/paper/rebuild` | 由 fills.jsonl 重建 positions(修复兜底, 管理入口) |
+| POST | `/api/paper/arena/batch_create` | 最多批量创建 20 个同规格对比账户并绑定规则 |
 
 约定: symbol 经 `repo.resolve_asset_type` 区分 stock/etf(镜像 lots API); 资产类型影响涨跌停与最小单位判断。
 
 ## 7. 前端设计
 
-新页面「模拟盘 Paper」(侧边栏一级菜单, 图标 💰/PiggyBank):
+「模拟盘 Paper」是侧边栏一级页面，当前以多账户对比为默认视图:
 
-- **总览区**: 净值曲线 vs 沪深300(复用 ECharts 组件)、现金/市值/总资产/当日盈亏卡片、盘中估值角标「实时估算, 收盘定版」
-- **持仓表**: 复用 Lots/自选的表格交互——现价(实时)、成本、浮盈、可卖数量、占比; 行内「卖出」按钮
-- **下单面板**: symbol 搜索 + 数量/金额 + 订单类型; 入口同时嵌到**个股分析页与自选行内**的「虚拟买入」按钮
-- **流水区**: 今日订单/成交、全部成交台账
-- **自动跟单页签**: 规则列表 + 新建(选策略/信号 + 仓位方式 + cooldown)
-- **统计页签**: 回合明细与汇总(口径与回测报告一致, 降低理解成本)
+- **对比总览**:账户数量、合计虚拟资产、平均收益、收益榜单、前 8 名归一化净值叠加；表头可排序，点行展开账户。
+- **批量构造**:选择多个策略或监控规则，以相同本金、费用、方向、仓位和订单类型批量创建账户，保证对比条件一致。
+- **账户操作**:现金/市值/总资产/盈亏、净值曲线 vs 沪深300、持仓表、订单与成交台账、冻结/解冻、费用与撮合设置。
+- **下单**:股票/ETF 联想搜索，按数量或金额下单，支持即时/次日开盘/当日收盘。
+- **自动跟单**:按账户维护规则，匹配策略或监控规则，可启停和删除。
+- **研究对比**:将当前账户实盘向前统计与已保存的策略回测候选并列比较。
+- **导出**:全部成交台账导出 CSV。
 
 ## 8. 统计口径(与回测对齐)
 
@@ -119,10 +134,10 @@ data/paper/
 ## 9. 边界、并发与风控
 
 - **写并发**: 域模块内全局写锁; 盘中 evaluate 与手动下单竞争同一把锁(镜像 mining_manager 的互斥模式)
-- **单账户限制**: 持仓标的数上限(默认 50)防误操作; 单笔金额上限(默认不超过可用现金, 不提供杠杆)
+- **账户限制**: 每账户持仓标的数上限 50；买入不得超过可用现金，不提供杠杆；账户之间账务完全隔离。
 - **冻结**: 账户 frozen 后拒绝新订单, 持仓只读; 保留数据可重建
 - **数据缺失**: 缺行情/缺因子一律留痕 warning + 顺延, 绝不臆造成交价(金融数据错误原则)
-- **回滚**: 停用功能 = 冻结账户 + 隐藏菜单; 数据目录独立(`data/paper/`), 删除即卸载
+- **停用**: 可冻结账户并隐藏菜单；数据目录独立为 `data/paper/`。删除运行数据前必须先备份并停止服务。
 
 ## 10. 测试矩阵(per CONTRIBUTING)
 
@@ -133,22 +148,27 @@ data/paper/
 | 管道挂点 | 盘后结算幂等(重跑同日不重复成交)、非交易日不结算 |
 | 自动规则 | 信号触发生成订单、cooldown 去重、scope 过滤 |
 | API 契约 | 下单/撤单/overview 成功与错误响应 |
-| 前端 | `tsc + vite build`; 关键交互本地 dev 目测 |
+| 多账户与对比 | 账户隔离、旧目录迁移、批量创建全量预校验、对比指标与空账户过滤 |
+| 前端 | Vitest + TypeScript/Vite build；关键交互本地 dev 检查 |
 
 修复 bug 一律先写复现测试再修(先失败后通过)。
 
-## 11. 分期与工作量
+## 11. 实现进度
 
-| 期 | 内容 | 预估 |
-|---|---|---|
-| **V1 核心闭环** | 账户+手动下单(即时/次日开盘/收盘)+撮合域模块+盘后结算+净值曲线+持仓/流水页 | 3-4 个 PR, 约 1.5-2 周 |
-| **V2 自动化** | 自动跟单规则、涨跌停排队可选、多账户、统计页签完整化 | 约 1 周 |
-| **V3 增强** | 成交推送/语音、导出 CSV、与回测报告同构对比页、AI 复盘注入模拟盘数据 | 约 1 周 |
+| 阶段 | 当前状态 |
+|---|---|
+| **V1 核心闭环** | ✅ 账户、手动下单、撮合、盘后结算、净值、持仓与流水 |
+| **V2 自动化** | ✅ 自动跟单、涨跌停排队、多账户、费用设置与统计 |
+| **V3 对比增强** | ✅ 成交通知、CSV、回测候选对比、批量竞技账户与净值叠加；AI 复盘注入尚未实现 |
 
-V1 交付即有完整价值: 手动跟单信号 → 看实时虚拟净值。
+实现以 `backend/app/strategy/paper.py`、`paper_auto.py`、`api/paper.py` 和
+`frontend/src/pages/Paper.tsx` 为准。
 
 ## 12. 明确不做 / 后续再议
 
 - 实盘通道、融资融券、期权期货
 - tick 级盘口撮合
-- 龙虎榜游资席位跟单(可作 V3 的规则信号源之一)
+- 现金分红单独入账
+- 账户删除/归档和跨账户资金划转
+- AI 复盘自动注入模拟盘对比结论
+- 龙虎榜游资席位跟单

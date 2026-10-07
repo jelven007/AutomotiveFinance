@@ -133,11 +133,17 @@ ETF 特殊拆分若未在服务器除权事件中返回，也无法从空表推�
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests/test_mootdx_client.py tests/test_mootdx_provider.py tests/test_mootdx_sync.py tests/test_custom_loader_install.py -q
+.venv/bin/python -m pytest \
+  tests/test_mootdx_client.py \
+  tests/test_mootdx_provider.py \
+  tests/test_mootdx_sync.py \
+  tests/test_auction_snapshot.py \
+  tests/test_custom_loader_install.py -q
 ```
 
 测试包含真实协议样本的单位回归、显式交易所路由、日期窗口、财务映射、
-下载校验、除权精度、连续失败中止、空试拉提示、文件保留以及禁止跨源回退。
+下载校验、除权精度、连续失败中止、空试拉提示、文件保留、竞价快照完整发布/
+拒绝陈旧会话，以及禁止跨源回退。
 
 最终检查：后端全量 pytest 为 **2569 passed、7 skipped**；前端 Vitest
 为 **103 passed**，TypeScript/Vite 构建通过，ESLint 为 0 error、
