@@ -1,4 +1,4 @@
-"""内置扩展数据预设 — 概念/行业在交易日盘中每小时自动更新。
+"""内置扩展数据预设 — 概念/行业在交易日盘中每 30 分钟自动更新。
 
 设计原则:
   - 扩展数据通用逻辑零改动 (ExtConfig / fetch_and_ingest / API / 前端均不动)
@@ -55,13 +55,13 @@ def _concept_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属概念", "string", "所属概念"),
         ],
-        description="同花顺概念分类 (交易日 09:00-16:00 每小时更新, 启动时立即刷新)",
+        description="同花顺概念分类 (交易日 09:00-16:00 每 30 分钟更新, 启动时立即刷新)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
             url=_CONCEPT_DATA_URL,
             method="GET",
-            schedule_minutes=60,
+            schedule_minutes=30,
             enabled=True,
             time_window_start="09:00",
             time_window_end="16:00",
@@ -86,13 +86,13 @@ def _industry_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属同花顺行业", "string", "所属同花顺行业"),
         ],
-        description="同花顺行业分类 (交易日 09:00-16:00 每小时更新, 启动时立即刷新)",
+        description="同花顺行业分类 (交易日 09:00-16:00 每 30 分钟更新, 启动时立即刷新)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
             url=_INDUSTRY_DATA_URL,
             method="GET",
-            schedule_minutes=60,
+            schedule_minutes=30,
             enabled=True,
             time_window_start="09:00",
             time_window_end="16:00",
@@ -238,7 +238,7 @@ def get_preset(config_id: str) -> ExtConfig | None:
 async def ensure_builtin_presets(data_dir: Path) -> None:
     """启动时为缺失的预设创建 config.json, 由调度器异步拉取。
 
-    新建预设默认启用交易日 09:00-16:00 每小时拉取; PullScheduler 在启动后
+    新建预设默认启用交易日 09:00-16:00 每 30 分钟拉取; PullScheduler 在启动后
     无视时段立即执行首轮。用户仍可在扩展数据设置中关闭自动拉取。
 
     安全保证:
@@ -255,7 +255,7 @@ async def ensure_builtin_presets(data_dir: Path) -> None:
         try:
             store.upsert(config)
             logger.info(
-                "内置扩展表 %s 配置已就绪 (交易日 09:00-16:00 每小时更新)",
+                "内置扩展表 %s 配置已就绪 (交易日 09:00-16:00 每 30 分钟更新)",
                 config.id,
             )
         except Exception as e:

@@ -1,8 +1,8 @@
-"""内置概念/行业 preset 默认启用交易日盘中每小时自动拉取。
+"""内置概念/行业 preset 默认启用交易日盘中每 30 分钟自动拉取。
 
 ensure_builtin_presets 只负责创建配置, 不直接等待网络请求; 随后
 PullScheduler.refresh 会为 enabled 配置创建后台任务, 启动时立即拉取一次,
-后续在交易日 09:00-16:00 每 60 分钟刷新。已有配置必须保持用户设置,
+后续在交易日 09:00-16:00 每 30 分钟刷新。已有配置必须保持用户设置,
 不因启动而被覆盖。
 """
 from __future__ import annotations
@@ -21,18 +21,18 @@ _PRESET_IDS = ("ext_gn_ths", "ext_hy_ths")
 
 
 def test_builtin_presets_ship_with_market_hours_pull_enabled() -> None:
-    """全新安装的内置 preset 默认在交易日盘中每小时自动拉取。"""
+    """全新安装的内置 preset 默认在交易日盘中每 30 分钟自动拉取。"""
     for preset in (_concept_preset(), _industry_preset()):
         assert preset.pull is not None
         assert preset.pull.url
         assert preset.pull.enabled is True
-        assert preset.pull.schedule_minutes == 60
+        assert preset.pull.schedule_minutes == 30
         assert preset.pull.time_window_start == "09:00"
         assert preset.pull.time_window_end == "16:00"
 
 
 def test_ensure_builtin_presets_writes_enabled_configs(tmp_path: Path) -> None:
-    """全新数据目录写入启用的配置, 供调度器创建盘中小时任务。"""
+    """全新数据目录写入启用的配置, 供调度器创建盘中定时任务。"""
     asyncio.run(ensure_builtin_presets(tmp_path))
 
     store = ExtConfigStore(tmp_path)
@@ -41,7 +41,7 @@ def test_ensure_builtin_presets_writes_enabled_configs(tmp_path: Path) -> None:
         assert config is not None, f"{cid} 配置未创建"
         assert config.pull is not None
         assert config.pull.enabled is True
-        assert config.pull.schedule_minutes == 60
+        assert config.pull.schedule_minutes == 30
         assert config.pull.time_window_start == "09:00"
         assert config.pull.time_window_end == "16:00"
 
