@@ -198,6 +198,8 @@ def test_api_jobs_wait_before_computing(
 
     monkeypatch.setattr(importlib.import_module(module_name), function_name, compute)
     monkeypatch.setattr(pipeline, "job_store", store)
+    # Match the capability stub below without relying on optional provider installs.
+    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "tickflow")
     monkeypatch.setattr("app.tickflow.pools.get_pool", lambda *args: [])
     monkeypatch.setattr(daily_pipeline, "_refresh_single_view", lambda *args: None)
     app = FastAPI()
