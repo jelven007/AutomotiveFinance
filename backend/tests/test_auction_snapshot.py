@@ -137,6 +137,41 @@ def test_capture_rejects_stale_catalog_without_network_request(tmp_path, monkeyp
     assert not (tmp_path / "auction_snapshot").exists()
 
 
+@pytest.mark.parametrize("source_time", ["9:25:08.125", "9:25:45.000", "9:29:59.999"])
+def test_capture_accepts_tdx_unpadded_hour(tmp_path, monkeypatch, source_time):
+    _seed(tmp_path)
+
+    result = _capture(monkeypatch, tmp_path, _Provider(source_time=source_time))
+
+    assert result["state"] == "ready"
+    assert result["source_time_match_ratio"] == 1.0
+    frame = pl.read_parquet(
+        tmp_path / "auction_snapshot" / f"date={DAY.isoformat()}" / "part.parquet"
+    )
+    assert frame["source_time"].to_list() == [source_time, source_time]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("9:25:00", True),
+        ("09:25:00.000", True),
+        ("9:29:59.999999", True),
+        ("9:24:59.999", False),
+        ("9:30:00", False),
+        ("09:30:00.000", False),
+        ("15:17:25.434", False),
+        (None, False),
+        ("", False),
+        ("9:25:08.", False),
+        ("09:25:08garbage", False),
+        ("09:25:60.000", False),
+    ],
+)
+def test_source_time_requires_valid_time_inside_auction_window(value, expected):
+    assert auction_snapshot._source_time_in_window(value) is expected
+
+
 def test_capture_rejects_previous_session_snapshot(tmp_path, monkeypatch):
     _seed(tmp_path)
     provider = _Provider(source_time="15:17:25.434")
@@ -145,6 +180,9 @@ def test_capture_rejects_previous_session_snapshot(tmp_path, monkeypatch):
 
     assert result["state"] == "stale_snapshot"
     assert result["source_time_match_ratio"] == 0.0
+    assert "行情时间" in result["message"]
+    assert "15:17:25.434" in result["message"]
+    assert result["source_time_samples"] == ["15:17:25.434"]
     assert not (tmp_path / "auction_snapshot").exists()
 
 
@@ -156,7 +194,26 @@ def test_capture_rejects_prev_close_mismatch(tmp_path, monkeypatch):
 
     assert result["state"] == "stale_snapshot"
     assert result["prev_close_match_ratio"] == 0.0
+    assert "昨收" in result["message"]
     assert not (tmp_path / "auction_snapshot").exists()
+
+
+def test_stale_capture_notification_explains_time_failure(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    result = _capture(monkeypatch, tmp_path, _Provider(source_time="15:17:25.434"))
+    monkeypatch.setattr(auction_snapshot.preferences, "get_feishu_webhook_url", lambda: "")
+    pushed = []
+
+    assert auction_snapshot.notify_capture_failure(
+        tmp_path, result, quote_service=SimpleNamespace(push_alerts=pushed.extend),
+    )
+
+    events = alert_store.list_recent(tmp_path, type="auction_capture_failed")
+    assert len(events) == 1
+    assert "行情时间校验未通过" in events[0]["message"]
+    assert "stale_snapshot" not in events[0]["message"]
+    assert events[0]["diagnostics"]["source_time_samples"] == ["15:17:25.434"]
+    assert pushed == events
 
 
 def test_ready_partition_prevents_duplicate_network_capture(tmp_path, monkeypatch):

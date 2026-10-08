@@ -181,7 +181,10 @@ def _latest_prior_closes(data_dir: Path, day: date) -> tuple[date | None, dict[s
 def _source_time_in_window(value: object) -> bool:
     text = str(value or "").strip()
     try:
-        parsed = datetime.strptime(text[:8], "%H:%M:%S").time()
+        # TDX hours are not zero-padded: slicing "9:25:08.125" at 8 leaves
+        # a trailing dot. Parse the whole value, including fractional seconds.
+        fmt = "%H:%M:%S.%f" if "." in text else "%H:%M:%S"
+        parsed = datetime.strptime(text, fmt).time()
     except ValueError:
         return False
     return dt_time(9, 25) <= parsed < dt_time(9, 30)
@@ -306,14 +309,36 @@ def capture_auction_snapshot(
             or comparable < minimum_comparisons
             or prev_close_match_ratio < _MIN_SESSION_MATCH_RATIO
         ):
+            source_time_samples = sorted({
+                str(row.get("source_time") or "").strip()
+                for row in rows_by_symbol.values()
+                if row.get("source_time")
+            })[:5]
+            reasons: list[str] = []
+            if source_time_match_ratio < _MIN_SESSION_MATCH_RATIO:
+                samples = "、".join(source_time_samples) or "缺失"
+                reasons.append(
+                    f"行情时间校验未通过: 09:25-09:30 窗口内报价占 "
+                    f"{source_time_match_ratio:.1%}, 要求至少 {_MIN_SESSION_MATCH_RATIO:.0%}"
+                    f" (源时间示例: {samples})"
+                )
+            if comparable < minimum_comparisons:
+                reasons.append(f"昨收可比样本不足: {comparable}/{minimum_comparisons}")
+            if prev_close_match_ratio < _MIN_SESSION_MATCH_RATIO:
+                reasons.append(
+                    f"昨收匹配率不足: {prev_close_match_ratio:.1%}, "
+                    f"要求至少 {_MIN_SESSION_MATCH_RATIO:.0%}"
+                )
             return {
                 "state": "stale_snapshot",
+                "message": "; ".join(reasons),
                 "trade_date": day.isoformat(),
                 "provider": provider_name,
                 **universe_meta,
                 "quote_count": quote_count,
                 "coverage_ratio": coverage_ratio,
                 "source_time_match_ratio": source_time_match_ratio,
+                "source_time_samples": source_time_samples,
                 "prev_close_match_ratio": prev_close_match_ratio,
                 "prev_close_sample_count": comparable,
                 "latest_prior_daily_date": prior_day.isoformat() if prior_day else None,
@@ -436,6 +461,7 @@ def notify_capture_failure(
             "quote_count",
             "coverage_ratio",
             "source_time_match_ratio",
+            "source_time_samples",
             "prev_close_match_ratio",
             "prev_close_sample_count",
             "latest_prior_daily_date",
