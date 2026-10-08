@@ -113,16 +113,28 @@ DATA_DIR=./data       # Parquet / DuckDB 数据存储目录
 
 ---
 
-## 访问密码(公网部署)
+## 邮箱账户(公网部署)
 
 ```ini
-AUTH_PASSWORD='你的密码'  # 至少 6 位;仅首次生效,已设过则不覆盖
+AUTH_EMAIL='admin@example.com'
+AUTH_PASSWORD='你的密码'  # 至少 8 位; 仅首次生效
+
+# 浏览器注册验证码 SMTP
+AUTH_SMTP_HOST='smtp.example.com'
+AUTH_SMTP_PORT=465
+AUTH_SMTP_SECURITY='ssl'  # ssl | starttls | none
+AUTH_SMTP_USERNAME='no-reply@example.com'
+AUTH_SMTP_PASSWORD='SMTP 密码或授权码'
+AUTH_SMTP_FROM_ADDRESS='no-reply@example.com'
 ```
 
-面板首次设置访问密码时,出于安全考虑**仅允许本机或内网访问**(防公网陌生人抢先设置锁死面板)。公网服务器部署可通过此环境变量预置首个密码。
-密码建议使用单引号包裹，Docker 启动时会把整个原始 `.env` 只读挂载到容器内 `/app/.env`，兼容已有的未加引号配置。容器可以读取其中的密钥但不能修改该文件，请保持主机文件权限为 `600` 并仅运行可信镜像。
+`AUTH_EMAIL` 与 `AUTH_PASSWORD` 同时设置时, 服务首次启动会预置邮箱账户。预置账户是部署初始化, 不要求验证码。已有账户后环境变量不再覆盖页面中维护的密码。
 
-详细步骤、SSH 转发方案、重置密码方法见 [deployment.md → 访问密码设置](./deployment.md#访问密码设置公网部署必读)。
+浏览器注册必须校验邮件验证码。全新部署要开放浏览器注册时需配置 `AUTH_SMTP_*`; `AUTH_SMTP_HOST` 留空时会尝试复用设置页已经保存的邮件 SMTP。验证码 10 分钟有效、60 秒后可重发, 连续输错 5 次后失效。
+
+只配置 `AUTH_PASSWORD` 时保留旧版兼容模式, 首次访问需使用原密码绑定邮箱。密码建议使用单引号包裹; `.env` 文件权限应保持 `600`。
+
+详细步骤和旧版迁移方法见[邮箱账户初始化](./deploy-password.md)。
 
 ---
 

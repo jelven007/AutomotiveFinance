@@ -2160,22 +2160,60 @@ export interface SectorRotationUniverseItem {
   excluded?: boolean
 }
 
+export interface AuthUser {
+  id: string
+  email: string
+  created_at: number
+}
+
+export interface AuthStatus {
+  configured: boolean
+  has_users: boolean
+  legacy_migration_required: boolean
+  registration_enabled: boolean
+  email_verification_required: boolean
+  authenticated: boolean
+  user: AuthUser | null
+}
+
+export interface AuthResult {
+  ok: boolean
+  authenticated: boolean
+  legacy_migration_required?: boolean
+  user: AuthUser | null
+}
+
 // ===== API surface =====
 export const api = {
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
 
-  // ===== Auth (访问认证) =====
+  // ===== Auth =====
   authStatus: () =>
-    request<{ configured: boolean; authenticated: boolean }>('/api/auth/status'),
+    request<AuthStatus>('/api/auth/status'),
+  authSendRegistrationCode: (email: string) =>
+    request<{ ok: boolean; cooldown_seconds: number }>('/api/auth/register/code', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  authRegister: (email: string, password: string, code: string) =>
+    request<AuthResult>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, code }),
+    }),
+  authMigrate: (email: string, password: string) =>
+    request<AuthResult>('/api/auth/migrate', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
   authSetup: (password: string) =>
     request<{ ok: boolean }>('/api/auth/setup', {
       method: 'POST',
       body: JSON.stringify({ password }),
     }),
-  authLogin: (password: string) =>
-    request<{ ok: boolean }>('/api/auth/login', {
+  authLogin: (email: string, password: string) =>
+    request<AuthResult>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ email, password }),
     }),
   authLogout: () =>
     request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),

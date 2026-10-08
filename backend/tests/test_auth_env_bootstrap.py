@@ -21,6 +21,7 @@ def isolated_auth_store(
     auth_path = tmp_path / "user_data" / "auth.json"
     env_path = tmp_path / ".env"
     monkeypatch.setattr(app_config, "_ENV_FILE", env_path)
+    monkeypatch.setattr(app_config.settings, "auth_email", "")
     monkeypatch.setattr(app_config.settings, "auth_password", "")
     auth._sessions.clear()
     auth._configured_cache = None

@@ -40,6 +40,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Download,
+  LogOut,
+  UserRound,
 } from 'lucide-react'
 import {
   IconDashboard,
@@ -358,6 +360,11 @@ type NavState = 'expanded' | 'rail' | 'hidden'
 export function Layout() {
   // ===== 共享 hooks (替代内联 useQuery) =====
   const { data: settingsState } = useSettings()
+  const { data: authStatus } = useQuery({
+    queryKey: QK.authStatus,
+    queryFn: api.authStatus,
+    staleTime: 30_000,
+  })
   const { data: matrix } = useCapabilityMatrix()
   const { data: versionData } = useVersion()
   // 更新检查 (单例 store): 启动静默查一次 GitHub Releases, 供左下角版本号徽标
@@ -471,6 +478,7 @@ export function Layout() {
 
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const [loggingOut, setLoggingOut] = useState(false)
   const version = versionData?.version
   const realtimeEnabled = prefs?.realtime_quotes_enabled ?? false
   // 自选实时模式限制提示: 可手动关闭, 不持久化 (刷新后恢复显示)
@@ -481,6 +489,19 @@ export function Layout() {
   // 三态循环切换 (仅桌面): 展开 → 图标条 → 隐藏 → 展开
   const toggleNavCollapsed = () => {
     setNavStatePersist(navState === 'expanded' ? 'rail' : navState === 'rail' ? 'hidden' : 'expanded')
+  }
+  const handleLogout = async () => {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      await api.authLogout()
+      window.localStorage.removeItem('tf-query-cache')
+      qc.clear()
+      window.location.href = '/login'
+    } catch (error) {
+      setLoggingOut(false)
+      toast(error instanceof Error ? error.message : '退出登录失败', 'error')
+    }
   }
   // 指数条: 固定核心四只 (产品契约, 不再可配置), 常驻显示
   const sidebarIndexes = CORE_INDEXES
@@ -1000,6 +1021,35 @@ export function Layout() {
         )}
 
         <div className={cn('border-t border-border py-3 shrink-0', railMode ? 'px-2 flex flex-col items-center gap-1' : 'px-2')}>
+          <div className={cn('mb-1 flex items-center', railMode ? 'flex-col gap-1' : 'gap-1')}>
+            <NavLink
+              to="/settings?tab=account"
+              title={railMode ? authStatus?.user?.email || '账户' : undefined}
+              className={cn(
+                'group flex min-w-0 items-center rounded-btn text-foreground/75 transition-colors hover:bg-elevated/70 hover:text-foreground',
+                railMode ? 'justify-center p-2' : 'flex-1 gap-2.5 px-3 py-2',
+              )}
+            >
+              <UserRound className="h-4 w-4 shrink-0 text-foreground/60 group-hover:text-foreground/85" />
+              {!railMode && (
+                <span className="min-w-0 flex-1 truncate text-xs">
+                  {authStatus?.user?.email || '账户'}
+                </span>
+              )}
+            </NavLink>
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              disabled={loggingOut}
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-btn text-muted transition-colors hover:bg-elevated hover:text-foreground disabled:opacity-50"
+              title="退出登录"
+              aria-label="退出登录"
+            >
+              {loggingOut
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <LogOut className="h-3.5 w-3.5" />}
+            </button>
+          </div>
           <div className={railMode ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1'}>
             <ThemeToggle />
             <NavLink

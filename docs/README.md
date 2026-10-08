@@ -22,7 +22,7 @@
 | 领域 | 文档 |
 | --- | --- |
 | 产品与使用 | [功能手册](./features.md)、[操作说明书](../操作说明书.md) |
-| 部署与配置 | [部署指南](./deployment.md)、[配置说明](./configuration.md)、[公网访问密码](./deploy-password.md) |
+| 部署与配置 | [部署指南](./deployment.md)、[配置说明](./configuration.md)、[公网邮箱账户](./deploy-password.md) |
 | 数据源 | [自定义数据源](./custom-data-source.md)、[mootdx 数据源](./mootdx-data-source.md)、[插件开发](./plugin-development.md) |
 | TickFlow 专项 | [Pro 一阶段探测](./tickflow-pro-phase1-probe.md)、[共享限流](./tickflow-pro-shared-rate-limit.md) |
 | 策略与研究 | [策略开发](./strategy.md)、[策略迭代](./strategy-iteration.md)、[因子平台方案](./factor-platform-plan.md)、[因子系统设计](./factor-system-design.md)、[因子挖掘](./mining.md) |

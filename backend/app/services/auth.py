@@ -1,15 +1,10 @@
-"""访问密码认证 — 单用户, 自托管场景。
+"""Email account authentication for the self-hosted web UI.
 
-设计:
-  - 密码用 PBKDF2-HMAC-SHA256 哈希(标准库 hashlib, 无新依赖), 加随机 salt。
-    即使 auth.json 泄露, 也无法逆向出明文密码。
-  - 会话用随机 token(token_urlsafe), 内存 + 文件双存(支持多进程/重启不丢失)。
-  - 存储: data/user_data/auth.json (chmod 0600), 仿 secrets_store 模式。
-
-安全要点:
-  - 设密码接口必须限制本机/内网(见 auth router), 防黑客抢占域名抢先设密码。
-  - 登录限流: 错5次锁5分钟(见 auth router 内存计数)。
-  - 单密码, 不做多用户(避免重构全项目数据层)。
+Accounts only control access to the shared application data. This first phase
+does not introduce tenants, roles, or password recovery. Public registration
+requires a short-lived email verification code.
+Legacy password-only installations remain readable until the owner binds an
+email address with the existing password.
 """
 from __future__ import annotations
 
@@ -17,177 +12,389 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets as _secrets
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from app.services.fs_utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
-# PBKDF2 参数(NIST 推荐, 单次校验 ~100ms, 兼顾安全与响应)
+_SCHEMA_VERSION = 2
 _PBKDF2_ITER = 200_000
 _SALT_LEN = 16
 _TOKEN_BYTES = 32
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_DUMMY_SALT = b"\0" * _SALT_LEN
+_DUMMY_HASH = hashlib.pbkdf2_hmac(
+    "sha256", b"invalid-account", _DUMMY_SALT, _PBKDF2_ITER,
+).hex()
 
-# 会话有效期: 30 天(自托管单用户, 长一点减少重登频率)
 SESSION_TTL = 30 * 24 * 3600
 
 _lock = threading.Lock()
-# 内存中的有效会话: { token: expire_ts }。进程重启后从磁盘恢复。
-_sessions: dict[str, float] = {}
-
-# 「是否已设密码」缓存: 每个 /api/ 请求都要判定, auth_middleware 原先每次 read_text
-# 磁盘 (阻塞事件循环)。此处懒加载缓存, set_password 后失效重算 (仍返回最新真值)。
+# token -> (expires_at, user_id). user_id=None denotes a legacy password session.
+_sessions: dict[str, tuple[float, str | None]] = {}
 _configured_cache: bool | None = None
+
+
+class EmailAlreadyRegisteredError(ValueError):
+    """Raised when an email address already owns an account."""
+
+
+class LegacyMigrationRequiredError(ValueError):
+    """Raised when password-only auth must be claimed before registration."""
 
 
 def _path() -> Path:
     from app.config import settings
-    p = settings.data_dir / "user_data" / "auth.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+
+    path = settings.data_dir / "user_data" / "auth.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _load() -> dict:
-    p = _path()
-    if p.exists():
+    path = _path()
+    if path.exists():
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception as e:  # noqa: BLE001
-            logger.warning("auth.json malformed: %s", e)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("auth.json malformed: %s", exc)
     return {}
 
 
 def _save(data: dict) -> None:
-    p = _path()
     atomic_write_text(
-        p, json.dumps(data, indent=2, ensure_ascii=False), mode=0o600,
+        _path(),
+        json.dumps(data, indent=2, ensure_ascii=False),
+        mode=0o600,
     )
 
 
+def normalize_email(email: str) -> str:
+    normalized = str(email or "").strip().casefold()
+    if (
+        len(normalized) > 254
+        or not _EMAIL_RE.fullmatch(normalized)
+        or normalized.startswith(".")
+        or ".." in normalized
+    ):
+        raise ValueError("请输入有效的邮箱地址")
+    return normalized
+
+
+def _validate_password(password: str, *, minimum: int = 8) -> None:
+    if len(password) < minimum:
+        raise ValueError(f"密码至少 {minimum} 位")
+    if len(password) > 128:
+        raise ValueError("密码不能超过 128 位")
+
+
 def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
-    """返回 (salt_hex, hash_hex)。salt 为 None 时生成新 salt。"""
     if salt is None:
         salt = os.urandom(_SALT_LEN)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITER)
-    return salt.hex(), dk.hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITER,
+    )
+    return salt.hex(), digest.hex()
 
 
 def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
-    """恒定时间比较, 防时序攻击。"""
     try:
         salt = bytes.fromhex(salt_hex)
         expected = bytes.fromhex(hash_hex)
-    except ValueError:
+    except (TypeError, ValueError):
         return False
-    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITER)
+    actual = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITER,
+    )
     return _secrets.compare_digest(actual, expected)
 
 
-# ================================================================
-# 密码管理
-# ================================================================
+def _users(data: dict) -> dict[str, dict]:
+    users = data.get("users")
+    return users if isinstance(users, dict) else {}
+
+
+def _find_user_by_email(data: dict, email: str) -> dict | None:
+    for user in _users(data).values():
+        if isinstance(user, dict) and user.get("email") == email:
+            return user
+    return None
+
+
+def _public_user(user: dict) -> dict:
+    return {
+        "id": str(user["id"]),
+        "email": str(user["email"]),
+        "created_at": int(user["created_at"]),
+    }
+
+
+def _new_user(email: str, password: str) -> dict:
+    _validate_password(password)
+    salt_hex, hash_hex = _hash_password(password)
+    now = int(time.time())
+    return {
+        "id": uuid.uuid4().hex,
+        "email": email,
+        "password_hash": hash_hex,
+        "password_salt": salt_hex,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _new_session_locked(data: dict, user_id: str | None) -> str:
+    token = _secrets.token_urlsafe(_TOKEN_BYTES)
+    expires_at = time.time() + SESSION_TTL
+    _sessions[token] = (expires_at, user_id)
+    saved = data.setdefault("sessions", {})
+    saved[token] = {"expires_at": expires_at, "user_id": user_id}
+    return token
+
+
+def has_users() -> bool:
+    return bool(_users(_load()))
+
+
+def is_email_registered(email: str) -> bool:
+    normalized = normalize_email(email)
+    return _find_user_by_email(_load(), normalized) is not None
+
+
+def requires_legacy_migration() -> bool:
+    data = _load()
+    return bool(data.get("password_hash")) and not bool(_users(data))
+
 
 def is_configured() -> bool:
-    """是否已设置访问密码 (带缓存)。
-
-    热路径 (auth_middleware 每请求调用): 命中缓存则不碰磁盘, 不阻塞事件循环。
-    首次或 set_password 失效后, 懒加载重读一次 auth.json, 保证返回最新真值。
-    """
+    """Whether any account or a legacy access password protects the app."""
     global _configured_cache
     if _configured_cache is None:
-        d = _load()
-        _configured_cache = bool(d.get("password_hash"))
+        data = _load()
+        _configured_cache = bool(_users(data) or data.get("password_hash"))
     return _configured_cache
 
 
-def set_password(password: str) -> None:
-    """设置/修改访问密码。清空所有现有会话(强制重新登录)。"""
+def register_user(email: str, password: str) -> tuple[str, dict]:
+    """Create an email account and an authenticated session."""
     global _configured_cache
-    if len(password) < 6:
-        raise ValueError("密码至少 6 位")
+    normalized = normalize_email(email)
+    _validate_password(password)
+    with _lock:
+        data = _load()
+        if data.get("password_hash") and not _users(data):
+            raise LegacyMigrationRequiredError(
+                "现有访问密码尚未绑定邮箱, 请先升级原账户",
+            )
+        if _find_user_by_email(data, normalized):
+            raise EmailAlreadyRegisteredError("该邮箱已注册")
+        user = _new_user(normalized, password)
+        data = {
+            "schema_version": _SCHEMA_VERSION,
+            "users": {**_users(data), user["id"]: user},
+            "sessions": data.get("sessions") or {},
+            "updated_at": int(time.time()),
+        }
+        token = _new_session_locked(data, user["id"])
+        _save(data)
+    _configured_cache = True
+    logger.info("auth account registered")
+    return token, _public_user(user)
+
+
+def migrate_legacy_user(email: str, password: str) -> tuple[str, dict] | None:
+    """Bind an email to the previous password-only account."""
+    global _configured_cache
+    normalized = normalize_email(email)
+    _validate_password(password, minimum=6)
+    with _lock:
+        data = _load()
+        if _users(data) or not data.get("password_hash"):
+            return None
+        if not _verify_password(
+            password,
+            data.get("password_salt", ""),
+            data["password_hash"],
+        ):
+            return None
+        # Existing passwords may be six or seven characters. Migration keeps
+        # the exact password; the eight-character rule applies on next change.
+        salt_hex, hash_hex = _hash_password(password)
+        now = int(time.time())
+        user = {
+            "id": uuid.uuid4().hex,
+            "email": normalized,
+            "password_hash": hash_hex,
+            "password_salt": salt_hex,
+            "created_at": now,
+            "updated_at": now,
+        }
+        _sessions.clear()
+        migrated = {
+            "schema_version": _SCHEMA_VERSION,
+            "users": {user["id"]: user},
+            "sessions": {},
+            "updated_at": now,
+        }
+        token = _new_session_locked(migrated, user["id"])
+        _save(migrated)
+    _configured_cache = True
+    logger.info("legacy auth migrated to email account")
+    return token, _public_user(user)
+
+
+def authenticate_user(email: str, password: str) -> tuple[str, dict] | None:
+    try:
+        normalized = normalize_email(email)
+    except ValueError:
+        normalized = ""
+    with _lock:
+        data = _load()
+        user = _find_user_by_email(data, normalized) if normalized else None
+        if user is None:
+            _verify_password(password, _DUMMY_SALT.hex(), _DUMMY_HASH)
+            return None
+        if not _verify_password(
+            password,
+            user.get("password_salt", ""),
+            user.get("password_hash", ""),
+        ):
+            return None
+        token = _new_session_locked(data, str(user["id"]))
+        _save(data)
+    return token, _public_user(user)
+
+
+def current_user(token: str) -> dict | None:
+    if not is_valid_session(token):
+        return None
+    with _lock:
+        session = _sessions.get(token)
+        if not session or session[1] is None:
+            return None
+        user = _users(_load()).get(session[1])
+        return _public_user(user) if isinstance(user, dict) else None
+
+
+def change_password(token: str, old_password: str, new_password: str) -> bool:
+    """Change the current account password and revoke all its sessions."""
+    _validate_password(new_password)
+    if not is_valid_session(token):
+        return False
+    with _lock:
+        session = _sessions.get(token)
+        user_id = session[1] if session else None
+        data = _load()
+        user = _users(data).get(user_id) if user_id else None
+        if not isinstance(user, dict) or not _verify_password(
+            old_password,
+            user.get("password_salt", ""),
+            user.get("password_hash", ""),
+        ):
+            return False
+        salt_hex, hash_hex = _hash_password(new_password)
+        user["password_salt"] = salt_hex
+        user["password_hash"] = hash_hex
+        user["updated_at"] = int(time.time())
+        for saved_token, (_, saved_user_id) in list(_sessions.items()):
+            if saved_user_id == user_id:
+                _sessions.pop(saved_token, None)
+        data["sessions"] = {
+            saved_token: {"expires_at": expires_at, "user_id": saved_user_id}
+            for saved_token, (expires_at, saved_user_id) in _sessions.items()
+        }
+        data["updated_at"] = int(time.time())
+        _save(data)
+    return True
+
+
+def set_password(password: str) -> None:
+    """Compatibility initializer for historical password-only deployments."""
+    global _configured_cache
+    _validate_password(password, minimum=6)
     salt_hex, hash_hex = _hash_password(password)
     with _lock:
-        _sessions.clear()  # 改密码 = 旧会话全部失效
+        _sessions.clear()
         _save({
             "password_hash": hash_hex,
             "password_salt": salt_hex,
             "updated_at": int(time.time()),
-            "sessions": {},  # 清空持久化会话
+            "sessions": {},
         })
-    _configured_cache = None  # 失效缓存, 下次 is_configured 重读最新真值
-    logger.info("access password set")
+    _configured_cache = True
+    logger.info("legacy access password set")
 
 
 def bootstrap_from_env() -> bool:
-    """首次初始化: 若环境变量 AUTH_PASSWORD 已配置且尚未设过密码, 则用它设密码。
-
-    公网服务器部署场景: 避免每次都要 SSH 端口转发才能设首个密码。
-    明文密码只在内存/配置中, 经 set_password() 哈希后写入 auth.json (chmod 0600)。
-    一旦设置成功, 后续重启不再覆盖 (用户改密码走 UI, 不受环境变量影响)。
-
-    Returns:
-        True 表示本次用环境变量初始化了密码; False 表示无需初始化。
-    """
+    """Initialize auth once from AUTH_EMAIL/AUTH_PASSWORD when provided."""
     from app.config import _ENV_FILE, settings
 
-    pwd = (settings.auth_password or "").strip()
-    # Compose 会对 env_file 中未加单引号的 $VAR 做插值。Docker 部署时同时
-    # 只读挂载原始 .env,首次初始化密码直接按 dotenv 语义读取,避免特殊字符被截断。
+    password = (settings.auth_password or "").strip()
+    email = (settings.auth_email or "").strip()
     if _ENV_FILE.is_file():
         from dotenv import dotenv_values
 
-        raw_pwd = dotenv_values(_ENV_FILE, encoding="utf-8", interpolate=False).get("AUTH_PASSWORD")
-        if isinstance(raw_pwd, str) and raw_pwd.strip():
-            pwd = raw_pwd.strip()
-    if not pwd:
-        return False
-    if is_configured():
-        # 已设过密码, 不覆盖 (避免环境变量反复重置用户在 UI 改的密码)
+        raw = dotenv_values(_ENV_FILE, encoding="utf-8", interpolate=False)
+        raw_password = raw.get("AUTH_PASSWORD")
+        raw_email = raw.get("AUTH_EMAIL")
+        if isinstance(raw_password, str) and raw_password.strip():
+            password = raw_password.strip()
+        if isinstance(raw_email, str) and raw_email.strip():
+            email = raw_email.strip()
+    if not password or is_configured():
         return False
     try:
-        set_password(pwd)
-        logger.info("access password bootstrapped from AUTH_PASSWORD env (one-time)")
+        if email:
+            token, _ = register_user(email, password)
+            revoke_session(token)
+            logger.info("auth account bootstrapped from environment")
+        else:
+            set_password(password)
+            logger.info("legacy auth bootstrapped from AUTH_PASSWORD")
         return True
-    except ValueError as e:
-        # 密码不合规 (< 6 位), 记日志但不阻断启动
-        logger.warning("AUTH_PASSWORD bootstrap skipped: %s", e)
+    except ValueError as exc:
+        logger.warning("auth environment bootstrap skipped: %s", exc)
         return False
 
 
 def verify_and_create_session(password: str) -> str | None:
-    """验证密码, 成功则创建会话并返回 token, 失败返回 None。"""
-    d = _load()
-    if not d.get("password_hash"):
-        return None
-    if not _verify_password(password, d.get("password_salt", ""), d["password_hash"]):
-        return None
-    token = _secrets.token_urlsafe(_TOKEN_BYTES)
-    expire = time.time() + SESSION_TTL
+    """Compatibility login for a password-only auth.json."""
     with _lock:
-        _sessions[token] = expire
-        _persist_sessions_locked()
-    return token
+        data = _load()
+        if _users(data) or not data.get("password_hash"):
+            return None
+        if not _verify_password(
+            password,
+            data.get("password_salt", ""),
+            data["password_hash"],
+        ):
+            return None
+        token = _new_session_locked(data, None)
+        _save(data)
+        return token
 
 
 def revoke_session(token: str) -> None:
-    """注销会话(登出)。"""
     with _lock:
         _sessions.pop(token, None)
         _persist_sessions_locked()
 
 
 def is_valid_session(token: str) -> bool:
-    """检查会话是否有效(存在且未过期)。过期则清理。"""
     if not token:
         return False
     with _lock:
-        expire = _sessions.get(token)
-        if expire is None:
+        session = _sessions.get(token)
+        if session is None:
             return False
-        if time.time() > expire:
+        if time.time() > session[0]:
             _sessions.pop(token, None)
             _persist_sessions_locked()
             return False
@@ -195,28 +402,38 @@ def is_valid_session(token: str) -> bool:
 
 
 def _persist_sessions_locked() -> None:
-    """把当前内存会话写回 auth.json(需持锁调用)。"""
-    d = _load()
-    d["sessions"] = {t: exp for t, exp in _sessions.items()}
-    _save(d)
+    data = _load()
+    data["sessions"] = {
+        token: {"expires_at": expires_at, "user_id": user_id}
+        for token, (expires_at, user_id) in _sessions.items()
+    }
+    _save(data)
 
 
 def _restore_sessions() -> None:
-    """启动时从 auth.json 恢复未过期会话(支持进程重启不丢登录态)。"""
     with _lock:
-        d = _load()
+        data = _load()
         now = time.time()
-        saved = d.get("sessions") or {}
-        for token, expire in saved.items():
-            if isinstance(expire, (int, float)) and expire > now:
-                _sessions[token] = expire
-        if len(_sessions) != len(saved):
-            # 有过期会话被清理, 落盘一次
+        saved = data.get("sessions") or {}
+        changed = False
+        for token, record in saved.items():
+            if isinstance(record, (int, float)):
+                expires_at, user_id = float(record), None
+            elif isinstance(record, dict):
+                expires_at = record.get("expires_at")
+                user_id = record.get("user_id")
+            else:
+                changed = True
+                continue
+            if isinstance(expires_at, (int, float)) and expires_at > now:
+                _sessions[token] = (float(expires_at), str(user_id) if user_id else None)
+            else:
+                changed = True
+        if changed:
             _persist_sessions_locked()
 
 
-# 模块加载时恢复会话
 try:
     _restore_sessions()
-except Exception as e:  # noqa: BLE001
-    logger.warning("restore sessions failed: %s", e)
+except Exception as exc:
+    logger.warning("restore sessions failed: %s", exc)

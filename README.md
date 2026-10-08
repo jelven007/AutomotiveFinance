@@ -546,7 +546,7 @@ CODEX_CLI_VERSION=0.144.3 docker compose up --build
 
 </details>
 
-> 📖 Docker 进阶、老 CPU 兼容、访问密码设置等见 [docs/deployment.md](./docs/deployment.md)。
+> 📖 Docker 进阶、老 CPU 兼容、邮箱账户设置等见 [docs/deployment.md](./docs/deployment.md)。
 
 ### 方式 C:本机 AI 代部署(AI玩家首选)
 
@@ -622,7 +622,7 @@ PORT=3018                      # 服务端口
 | [docs/testing.md](./docs/testing.md)                                                               | 测试分层、CI 门禁、金融正确性与发布验收矩阵                          |
 | [docs/operations.md](./docs/operations.md)                                                         | 巡检、日志、调度、备份恢复、升级回滚和故障处理                       |
 | [docs/release-operations.md](./docs/release-operations.md)                                         | 版本、产物、上线观察、回滚、反馈与运营复盘                           |
-| [docs/deployment.md](./docs/deployment.md)                                                         | 部署方式(Dev / Docker / GH Actions)、老 CPU 兼容、更新代码、访问密码 |
+| [docs/deployment.md](./docs/deployment.md)                                                         | 部署方式(Dev / Docker / GH Actions)、老 CPU 兼容、更新代码、邮箱账户 |
 | [docs/configuration.md](./docs/configuration.md)                                                   | 所有 `.env` 配置项详解(数据源、AI、服务、密码、数据目录)             |
 | [docs/features.md](./docs/features.md)                                                             | 各功能模块详细说明(选股/指标/回测/监控/个股分析/数据扩展/开放接口)   |
 | [操作说明书.md](./操作说明书.md)                                                                   | 面向使用者的完整页面操作、维护与排错说明                             |

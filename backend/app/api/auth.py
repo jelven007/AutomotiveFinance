@@ -1,18 +1,4 @@
-"""访问认证 API。
-
-端点:
-  GET  /api/auth/status        — 是否已设密码、当前会话是否有效
-  POST /api/auth/setup         — 首次设置密码(仅限本机/内网, 防公网抢占)
-  POST /api/auth/login         — 登录(密码 → 会话 token, 含限流)
-  POST /api/auth/logout        — 注销当前会话
-  POST /api/auth/change-password — 改密码(需已登录)
-
-安全:
-  - setup 端点只接受本机/内网请求(request.client.host), 公网请求 403。
-    否则黑客可比用户更早扫到域名, 抢先设密码, 反客为主。
-  - login 限流: 同一来源 IP 连续失败 5 次, 锁 5 分钟(内存计数)。
-  - 会话 token 通过 HttpOnly cookie 下发, 前端无需手动管理。
-"""
+"""Email account and legacy password authentication API."""
 from __future__ import annotations
 
 import logging
@@ -23,7 +9,7 @@ from threading import Lock
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from app.services import auth
+from app.services import auth, auth_verification
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +23,11 @@ _fail_counter: dict[str, tuple[int, float]] = defaultdict(lambda: (0, 0.0))
 _fail_lock = Lock()
 _MAX_FAILS = 5
 _LOCK_SECONDS = 300
+
+# Bound verification-email attempts per source to prevent a public instance
+# from becoming an SMTP relay without adding a database or external limiter.
+_registration_attempts: dict[str, list[float]] = defaultdict(list)
+_MAX_REGISTRATIONS_PER_HOUR = 10
 
 
 def _is_local_network(host: str | None) -> bool:
@@ -81,7 +72,7 @@ def _client_ip(request: Request) -> str:
 def _check_login_rate_limit(ip: str) -> None:
     """登录失败限流检查, 触发则抛 429。锁定过期后重置计数(重新给 5 次机会)。"""
     with _fail_lock:
-        count, until = _fail_counter.get(ip, (0, 0.0))
+        _count, until = _fail_counter.get(ip, (0, 0.0))
         now = time.time()
         if until > now:
             wait = int(until - now)
@@ -116,6 +107,44 @@ def _clear_login_fails(ip: str) -> None:
         _fail_counter.pop(ip, None)
 
 
+def _record_registration_attempt(ip: str) -> None:
+    now = time.time()
+    cutoff = now - 3600
+    with _fail_lock:
+        if len(_registration_attempts) > 1000:
+            for stale_ip in [
+                key
+                for key, timestamps in _registration_attempts.items()
+                if not timestamps or timestamps[-1] <= cutoff
+            ]:
+                _registration_attempts.pop(stale_ip, None)
+        recent = [timestamp for timestamp in _registration_attempts[ip] if timestamp > cutoff]
+        if len(recent) >= _MAX_REGISTRATIONS_PER_HOUR:
+            raise HTTPException(
+                status_code=429,
+                detail="注册请求过于频繁, 请稍后重试",
+            )
+        recent.append(now)
+        _registration_attempts[ip] = recent
+
+
+def _set_session_cookie(response: Response, request: Request, token: str) -> None:
+    direct = request.client.host if request.client else ""
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    is_https = request.url.scheme == "https" or (
+        _is_local_network(direct) and forwarded_proto.split(",")[0].strip() == "https"
+    )
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        secure=is_https,
+    )
+
+
 # ================================================================
 # 端点
 # ================================================================
@@ -125,31 +154,134 @@ class PasswordIn(BaseModel):
 
 
 class LoginIn(BaseModel):
+    email: str | None = Field(default=None, max_length=254)
     password: str = Field(min_length=1, max_length=128)
+
+
+class AccountIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class RegistrationCodeIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class LegacyMigrationIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=6, max_length=128)
 
 
 class ChangePasswordIn(BaseModel):
     old_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=6, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 @router.get("/status")
 def auth_status(request: Request) -> dict:
-    """认证状态: 是否已设密码 + 当前请求是否已登录。"""
+    """Return account availability and the current browser session."""
     token = request.cookies.get(COOKIE_NAME)
+    authenticated = bool(token and auth.is_valid_session(token))
     return {
         "configured": auth.is_configured(),
-        "authenticated": bool(token and auth.is_valid_session(token)),
+        "has_users": auth.has_users(),
+        "legacy_migration_required": auth.requires_legacy_migration(),
+        "registration_enabled": True,
+        "email_verification_required": True,
+        "authenticated": authenticated,
+        "user": auth.current_user(token) if authenticated and token else None,
     }
+
+
+@router.post("/register/code")
+def send_registration_code(req: RegistrationCodeIn, request: Request) -> dict:
+    """Send a short-lived verification code to an unregistered email."""
+    try:
+        normalized = auth.normalize_email(req.email)
+        if auth.is_email_registered(normalized):
+            raise HTTPException(status_code=409, detail="该邮箱已注册")
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if auth.requires_legacy_migration():
+        raise HTTPException(
+            status_code=409,
+            detail="现有访问密码尚未绑定邮箱, 请先升级原账户",
+            headers={"X-Auth-Action": "migrate"},
+        )
+
+    _record_registration_attempt(_client_ip(request))
+    try:
+        cooldown = auth_verification.send_registration_code(normalized)
+    except auth_verification.VerificationCodeCooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except auth_verification.VerificationEmailUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"ok": True, "cooldown_seconds": cooldown}
+
+
+@router.post("/register", status_code=201)
+def register(req: AccountIn, request: Request, response: Response) -> dict:
+    """Create an email account and sign the browser in."""
+    try:
+        if auth.is_email_registered(req.email):
+            raise auth.EmailAlreadyRegisteredError("该邮箱已注册")
+        if auth.requires_legacy_migration():
+            raise auth.LegacyMigrationRequiredError(
+                "现有访问密码尚未绑定邮箱, 请先升级原账户",
+            )
+        auth_verification.consume_code(req.email, req.code)
+        token, user = auth.register_user(req.email, req.password)
+    except auth_verification.VerificationCodeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except auth.EmailAlreadyRegisteredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except auth.LegacyMigrationRequiredError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+            headers={"X-Auth-Action": "migrate"},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _set_session_cookie(response, request, token)
+    logger.info("auth registration completed from %s", _client_ip(request))
+    return {"ok": True, "authenticated": True, "user": user}
+
+
+@router.post("/migrate")
+def migrate_legacy_account(
+    req: LegacyMigrationIn,
+    request: Request,
+    response: Response,
+) -> dict:
+    """Bind an email to a password-only installation without losing access."""
+    ip = _client_ip(request)
+    _check_login_rate_limit(ip)
+    if not auth.requires_legacy_migration():
+        raise HTTPException(status_code=409, detail="当前系统无需升级旧账户")
+    try:
+        result = auth.migrate_legacy_user(req.email, req.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        _record_login_fail(ip)
+        raise HTTPException(status_code=401, detail="原访问密码错误")
+    token, user = result
+    _clear_login_fails(ip)
+    _set_session_cookie(response, request, token)
+    return {"ok": True, "authenticated": True, "user": user}
 
 
 @router.post("/setup")
 def setup_password(req: PasswordIn, request: Request) -> dict:
-    """首次设置访问密码。仅限本机/内网请求(防公网抢占)。
-
-    若已设置过密码, 返回 409(改密码走 /change-password)。
-    """
-    # 关键: 限制只有服务器主人(本机/内网)能设密码
+    """Compatibility endpoint for creating a legacy access password."""
     client_ip = _client_ip(request)
     if not _is_local_network(client_ip):
         logger.warning("setup rejected from non-local ip: %s", client_ip)
@@ -168,30 +300,36 @@ def setup_password(req: PasswordIn, request: Request) -> dict:
 
 @router.post("/login")
 def login(req: LoginIn, request: Request, response: Response) -> dict:
-    """登录: 密码 → 会话 token(写 HttpOnly cookie)。含失败限流。"""
+    """Authenticate an email account or a legacy password installation."""
     ip = _client_ip(request)
     _check_login_rate_limit(ip)
 
     if not auth.is_configured():
-        raise HTTPException(status_code=409, detail="尚未设置访问密码")
+        raise HTTPException(status_code=409, detail="系统尚未创建账户")
 
-    token = auth.verify_and_create_session(req.password)
-    if not token:
+    user = None
+    if auth.has_users():
+        if not req.email:
+            raise HTTPException(status_code=400, detail="请输入邮箱地址")
+        result = auth.authenticate_user(req.email, req.password)
+        if result:
+            token, user = result
+        else:
+            token = None
+    else:
+        token = auth.verify_and_create_session(req.password)
+    if token is None:
         _record_login_fail(ip)
-        raise HTTPException(status_code=401, detail="密码错误")
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
     _clear_login_fails(ip)
-    # HttpOnly: 防 XSS 窃取; SameSite=Lax: 防 CSRF; Path=/: 全站生效
-    response.set_cookie(
-        key=COOKIE_NAME,
-        value=token,
-        max_age=_COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        path="/",
-        secure=False,  # 自托管可能无 HTTPS, 不强制 secure(建议反代加 HTTPS)
-    )
-    return {"ok": True, "authenticated": True}
+    _set_session_cookie(response, request, token)
+    return {
+        "ok": True,
+        "authenticated": True,
+        "legacy_migration_required": user is None,
+        "user": user,
+    }
 
 
 @router.post("/logout")
@@ -206,23 +344,16 @@ def logout(request: Request, response: Response) -> dict:
 
 @router.post("/change-password")
 def change_password(req: ChangePasswordIn, request: Request) -> dict:
-    """修改密码: 需验证旧密码, 成功后所有会话失效(含当前, 需重新登录)。"""
+    """Change the current account password and revoke its sessions."""
     token = request.cookies.get(COOKIE_NAME)
     if not (token and auth.is_valid_session(token)):
         raise HTTPException(status_code=401, detail="请先登录")
-
-    if not auth.is_configured():
-        raise HTTPException(status_code=409, detail="尚未设置访问密码")
-
-    # 验证旧密码
-    new_token = auth.verify_and_create_session(req.old_password)
-    if not new_token:
+    try:
+        changed = auth.change_password(token, req.old_password, req.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not changed:
         ip = _client_ip(request)
         _record_login_fail(ip)
-        raise HTTPException(status_code=401, detail="旧密码错误")
-    # 临时 token 用完即弃
-    auth.revoke_session(new_token)
-
-    # 改密码(set_password 会清空所有会话)
-    auth.set_password(req.new_password)
+        raise HTTPException(status_code=400, detail="旧密码错误")
     return {"ok": True, "message": "密码已修改, 请重新登录"}

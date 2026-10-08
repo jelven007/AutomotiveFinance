@@ -138,9 +138,18 @@ class Settings(BaseSettings):
     # 前端轮询 cached-summary 点亮卡片。0 = 关闭 (整段阻塞, 旧行为)。
     strategy_run_all_first_return_s: float = 15.0
 
-    # Auth — 首次启动时预置访问密码(明文, 仅用于初始化, 详见 services/auth.bootstrap_from_env)
-    # 公网服务器部署时免去 SSH 端口转发设密码的麻烦。写入 auth.json(哈希)后即不再读取。
+    # Auth — 首次启动时可预置邮箱账户。AUTH_EMAIL 与 AUTH_PASSWORD 同时配置时
+    # 创建邮箱账户; 只配置 AUTH_PASSWORD 时保留旧版密码模式, 登录后可绑定邮箱。
+    auth_email: str = ""
     auth_password: str = ""
+    # Public registration must be able to send before any user is signed in.
+    # If AUTH_SMTP_HOST is empty, registration falls back to SMTP saved in settings.
+    auth_smtp_host: str = ""
+    auth_smtp_port: int = 465
+    auth_smtp_security: str = "ssl"
+    auth_smtp_username: str = ""
+    auth_smtp_password: str = ""
+    auth_smtp_from_address: str = ""
 
     # Data — frozen: exe 同级 data/ 子目录; 非 frozen: 项目根 data/
     # (均可被环境变量 DATA_DIR 覆盖, pydantic-settings 自动注入)
@@ -180,6 +189,10 @@ class Settings(BaseSettings):
             raise ValueError("strategy_run_all_workers must be >= 1")
         if self.strategy_run_all_first_return_s < 0:
             raise ValueError("strategy_run_all_first_return_s must be >= 0")
+        if not 1 <= self.auth_smtp_port <= 65535:
+            raise ValueError("auth_smtp_port must be in [1, 65535]")
+        if self.auth_smtp_security not in {"ssl", "starttls", "none"}:
+            raise ValueError("auth_smtp_security must be ssl, starttls, or none")
         return self
 
     @property

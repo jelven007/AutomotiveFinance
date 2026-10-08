@@ -104,8 +104,8 @@ async def _application_lifespan(app: FastAPI):
         __version__, tf_client.current_mode(),
     )
 
-    # 首次启动: 若配置了 AUTH_PASSWORD 环境变量且未设过密码, 用它初始化。
-    # 公网部署免 SSH 端口转发; 已设过密码则不覆盖 (改密码走 UI)。
+    # 首次启动可通过 AUTH_EMAIL/AUTH_PASSWORD 预置账户。
+    # 仅配置旧 AUTH_PASSWORD 时进入待绑定邮箱的兼容模式。
     try:
         from app.services import auth as auth_service
         auth_service.bootstrap_from_env()
@@ -458,11 +458,10 @@ app.add_middleware(
 # ================================================================
 # 访问认证中间件
 # ================================================================
-# 拦截所有 /api/ 请求, 三种状态:
-#   1. 未设密码 + 本机/内网 → 放行(让本机用户访问面板 + 调 /api/auth/setup 设密码)
-#   2. 未设密码 + 公网       → 拒绝(403, 防裸奔也防抢占; 引导本机设密码)
-#   3. 已设密码              → 检查 session, 无效则 401(前端跳登录)
-# 白名单: /api/auth/* (设密码/登录本身)、/health 等探活。
+# 拦截所有 /api/ 请求:
+#   1. 尚无账户 → 业务 API 拒绝, 仅开放注册/登录等认证端点
+#   2. 已有账户 → 检查 session, 无效则 401(前端跳登录)
+# 白名单: /api/auth/*、/health 等探活。
 _AUTH_WHITELIST_PREFIX = ("/api/auth/",)
 _AUTH_WHITELIST_EXACT = (
     "/health",
@@ -509,21 +508,17 @@ async def auth_middleware(request: Request, call_next):
         return response
 
     from app.services import auth as auth_service
-    # 情况 1+2: 未设密码
+    # 尚无账户时业务 API 保持关闭; 注册端点已在白名单中。
     if not auth_service.is_configured():
-        # 本机/内网 → 放行(服务器主人可访问, 并去 /login 设密码)
-        if auth_api._is_local_network(auth_api._client_ip(request)):
-            return await call_next(request)
-        # 公网 → 拒绝。不裸奔, 也不给公网设密码的机会(防抢占)
         return JSONResponse(
             status_code=403,
             content={
-                "detail": "面板尚未初始化访问密码,请通过 SSH/本机浏览器访问以设置密码",
-                "code": "NOT_INITIALIZED",
+                "detail": "系统尚未创建账户, 请先注册",
+                "code": "NO_ACCOUNT",
             },
         )
 
-    # 情况 3: 已设密码, 检查会话
+    # 已配置认证, 检查浏览器会话。
     token = request.cookies.get(auth_api.COOKIE_NAME)
     if token and auth_service.is_valid_session(token):
         return await call_next(request)
