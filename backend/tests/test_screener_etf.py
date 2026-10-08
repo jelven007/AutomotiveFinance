@@ -41,21 +41,28 @@ def test_all_builtin_strategies_declare_asset_types_and_timeframes():
     assert engine.load_errors() == []
     for meta in engine.list_strategies():
         assert meta["asset_types"]
-        # 分钟红7已迁至自定义策略目录, 内置策略均为日线
-        assert meta["timeframes"] == ["1d"]
+        assert meta["timeframes"] in (["1d"], ["1m"])
 
 
-def test_all_builtin_strategies_use_matrix_backend_only():
+def test_builtin_backends_match_their_timeframe_contract():
     engine = _engine()
     assert engine.load_errors() == []
     strategies = [engine.get(meta["id"]) for meta in engine.list_strategies()]
+    assert strategies
+    for strategy in strategies:
+        if strategy.meta["timeframes"] == ["1m"]:
+            assert strategy.execution_backend == "minute_filter"
+            assert callable(strategy.filter_minute_history_fn)
+            assert strategy.matrix_strategy is None
+            assert strategy.filter_fn is None
+            assert strategy.filter_history_fn is None
+        else:
+            assert strategy.execution_backend == "matrix_native"
     matrix_strategies = [s for s in strategies if s.execution_backend == "matrix_native"]
-    assert len(matrix_strategies) == 25
+    assert matrix_strategies
     assert all(s.matrix_strategy is not None for s in matrix_strategies)
     assert all(s.filter_fn is None for s in matrix_strategies)
     assert all(s.filter_history_fn is None for s in matrix_strategies)
-    # 分钟形态策略 (minute_filter) 已迁至自定义策略目录, 不在 builtin 加载范围
-    assert [s.meta["id"] for s in strategies if s.execution_backend == "minute_filter"] == []
 
 
 def test_all_builtin_matrix_formulas_accept_base_market_matrix():

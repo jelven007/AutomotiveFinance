@@ -64,6 +64,19 @@ uv run ruff check app/path.py tests/path.py
 
 高风险共享模块改动应先跑定向用例定位问题，再跑后端全量测试。
 
+发布与健康检查故障回归:
+
+```bash
+uv run --frozen pytest tests/test_enriched_generation.py tests/test_enriched_full_rebuild.py tests/test_enriched_recovery.py tests/test_data_release.py tests/test_health.py -q
+```
+
+覆盖属主死亡后保持不可读、局部股票/ETF 写入不得接管、恢复取消/第二分区写入
+失败后的重试、替换后目录 fsync 失败保持不可读、全量历史覆盖检查、
+嵌套 manifest 损坏、首次 generation 漂移、
+元数据采集及最终写入边界的版本竞态, 以及单项健康检查异常隔离。
+新鲜度用人工交易日历验证长假、少一个交易日和盘后宽限; 明确测试日历不完整
+时返回 unknown 且不会访问 Provider。日期样本不作为现实交易所休市日历。
+
 ### 4.2 前端
 
 ```bash

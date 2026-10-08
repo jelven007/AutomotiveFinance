@@ -238,14 +238,16 @@ def test_matrix_reader_retries_when_generation_changes_during_build(
     assert calls == ["generation-a", "generation-b"]
 
 
-def test_live_flush_write_recovers_stale_marker_from_dead_process(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("asset_type", ["stock", "etf"])
+@pytest.mark.parametrize("method", [
+    "append_enriched_asset", "merge_live_enriched_asset", "flush_live_enriched_asset",
+])
+def test_partial_write_cannot_recover_stale_marker(
+    tmp_path, asset_type, method
 ) -> None:
-    """实时 enriched 落盘(repository 路径)遇到僵死 publishing 标记应接管自愈,
-    而非持续抛错直到下一次盘后管道。"""
-    from app.tickflow.repository import DataStore, KlineRepository
-
-    (tmp_path / ".matrix_generation_stock.json").write_text(
+    """局部写入不能证明历史分区完整, 不得解除失败发布。"""
+    marker_path = tmp_path / f".matrix_generation_{asset_type}.json"
+    marker_path.write_text(
         json.dumps({
             "state": "publishing",
             "generation": "stale-generation",
@@ -256,13 +258,11 @@ def test_live_flush_write_recovers_stale_marker_from_dead_process(
         encoding="utf-8",
     )
 
+    before = marker_path.read_bytes()
     repo = KlineRepository(DataStore(tmp_path))
-    repo.append_enriched(_frame(10.0))
-
-    marker = json.loads(
-        (tmp_path / ".matrix_generation_stock.json").read_text(encoding="utf-8")
-    )
-    assert marker["state"] == "ready"
+    with pytest.raises(EnrichedGenerationUnavailableError, match="incomplete"):
+        getattr(repo, method)(asset_type, _frame(10.0))
+    assert marker_path.read_bytes() == before
 
 
 def _stale_publishing_marker(tmp_path, owner_pid: int = 999999999) -> None:
@@ -278,21 +278,50 @@ def _stale_publishing_marker(tmp_path, owner_pid: int = 999999999) -> None:
     )
 
 
-def test_reader_self_heals_stale_publishing_marker_from_dead_owner(tmp_path) -> None:
-    """读取方遇到属主已死的 publishing 标记应就地恢复 ready, 而非持续失败
-    直到某个写入方碰巧接管 (dev 热重载杀掉发布进程即产生这种孤儿)。"""
+@pytest.mark.parametrize("initialize", [False, True])
+def test_reader_preserves_stale_publishing_marker(tmp_path, initialize) -> None:
+    """属主死亡不代表磁盘数据完整, 读取必须保持关闭且不改写标记。"""
     _stale_publishing_marker(tmp_path)
+    path = tmp_path / ".matrix_generation_stock.json"
+    before = path.read_bytes()
+    with pytest.raises(EnrichedGenerationUnavailableError, match="being published"):
+        get_enriched_generation(tmp_path, "stock", initialize=initialize)
+    assert path.read_bytes() == before
 
-    generation = get_enriched_generation(tmp_path, "stock")
 
-    marker = json.loads(
-        (tmp_path / ".matrix_generation_stock.json").read_text(encoding="utf-8")
-    )
-    assert marker["state"] == "ready"
-    # 恢复时换新 generation: 磁盘可能残留部分替换的文件, 按代缓存需要失效。
-    assert generation not in ("", "stale-generation")
-    assert generation == marker["generation"]
-    assert get_enriched_generation(tmp_path, "stock") == generation
+@pytest.mark.parametrize("invalid_marker", [False, True])
+def test_abandon_recovery_keeps_incomplete_data_unavailable(tmp_path, invalid_marker) -> None:
+    _stale_publishing_marker(tmp_path)
+    if invalid_marker:
+        (tmp_path / ".matrix_generation_stock.json").write_text("{broken")
+    recovery = EnrichedPublication(tmp_path, recover=True)
+    recovery.begin()
+    recovery.abandon()
+
+    with pytest.raises(EnrichedGenerationUnavailableError):
+        get_enriched_generation(tmp_path)
+
+
+def test_directory_fsync_failure_after_replace_cannot_restore_ready(tmp_path, monkeypatch):
+    from app import enriched_generation
+
+    publication = EnrichedPublication(tmp_path)
+    out = tmp_path / "kline_daily_enriched" / "date=2026-08-14" / "part.parquet"
+    original = enriched_generation._fsync_directory
+
+    def fail_partition_fsync(path):
+        if path.name.startswith("date="):
+            raise OSError("injected directory fsync failure")
+        original(path)
+
+    monkeypatch.setattr(enriched_generation, "_fsync_directory", fail_partition_fsync)
+    with pytest.raises(OSError, match="injected"):
+        publication.write_parquet(_frame(), out)
+    publication.abandon()
+
+    assert out.is_file()  # 替换已经发生, 不能当成无变化取消。
+    with pytest.raises(EnrichedGenerationUnavailableError):
+        get_enriched_generation(tmp_path)
 
 
 def test_reader_still_fails_closed_while_owner_is_alive(

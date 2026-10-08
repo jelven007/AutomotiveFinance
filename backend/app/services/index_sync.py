@@ -10,11 +10,15 @@ import gc
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import polars as pl
 
-from app.indicators.pipeline import compute_enriched
+from app.enriched_generation import EnrichedPublication, enriched_publication_incomplete
+from app.indicators.pipeline import ENRICHED_STORAGE_COLS, compute_enriched
 from app.market_time import cn_now
+from app.parquet import scan_daily_parquet
 from app.services import kline_sync, preferences
 from app.services.instrument_sync import _fetch_instruments_via_provider
 from app.tickflow.capabilities import Cap, CapabilitySet
@@ -359,6 +363,51 @@ def sync_etf_adj_factor(
     )
 
 
+def rebuild_etf_enriched(repo: KlineRepository) -> int:
+    """从全部本地 ETF 日线重建, 所有分区完成后才解除失败发布。"""
+    data_dir = repo.store.data_dir
+    daily_files = sorted((data_dir / "kline_etf_daily").glob("date=*/*.parquet"))
+    if not daily_files:
+        raise RuntimeError("ETF enriched 恢复需要完整本地日线")
+    source = scan_daily_parquet([str(path) for path in daily_files])
+    symbols = source.select("symbol").unique().collect()["symbol"].to_list()
+    base = data_dir / "kline_etf_enriched"
+    staging_root = data_dir / ".staging" / "etf_enriched_rebuild"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    publication = EnrichedPublication(data_dir, "etf", recover=True)
+    publication.begin()
+    try:
+        factors = _load_etf_factors(repo)
+        with TemporaryDirectory(dir=staging_root) as temporary:
+            files: list[str] = []
+            for i, chunk in enumerate(chunked(symbols, 100)):
+                raw = source.filter(pl.col("symbol").is_in(chunk)).collect()
+                enriched = compute_enriched(raw, factors=factors, instruments=None)
+                path = Path(temporary) / f"batch-{i}.parquet"
+                enriched.select([
+                    col for col in ENRICHED_STORAGE_COLS if col in enriched.columns
+                ]).write_parquet(path)
+                files.append(str(path))
+            if not files:
+                raise RuntimeError("ETF 本地日线为空, 无法恢复 enriched")
+            staged = pl.scan_parquet(files)
+            dates = sorted(staged.select("date").unique().collect()["date"].to_list())
+            existing_dates = {p.name for p in base.glob("date=*") if p.is_dir()}
+            if existing_dates - {f"date={day.isoformat()}" for day in dates}:
+                raise RuntimeError("ETF 全量重建缺少已有日期分区, 保留未完成发布")
+            written = 0
+            for day in dates:
+                frame = staged.filter(pl.col("date") == day).collect().sort("symbol")
+                out = base / f"date={day.isoformat()}" / "part.parquet"
+                publication.write_parquet(frame, out)
+                written += frame.height
+            publication.commit()
+    finally:
+        publication.abandon()
+    repo.refresh_index_views()
+    return written
+
+
 def sync_and_persist_etf_daily(
     repo: KlineRepository,
     capset: CapabilitySet,
@@ -371,6 +420,8 @@ def sync_and_persist_etf_daily(
     """同步 ETF 日K到独立 kline_etf_* parquet,并计算 ETF enriched。
     on_chunk_done(current, total) 每个批次完成后回调。
     """
+    if enriched_publication_incomplete(repo.store.data_dir, "etf"):
+        rebuild_etf_enriched(repo)
     custom_daily = preferences.get_daily_data_provider() != "tickflow"
     if not custom_daily and not capset.has(Cap.KLINE_DAILY_BATCH):
         return 0

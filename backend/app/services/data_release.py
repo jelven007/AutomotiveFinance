@@ -13,7 +13,9 @@ from typing import Any
 from app import __version__
 from app.enriched_generation import (
     EnrichedGenerationUnavailableError,
+    enriched_publication_incomplete,
     get_enriched_generation,
+    guard_enriched_generations,
 )
 from app.services.provider_audit import audit_provider_routes
 
@@ -148,6 +150,7 @@ def collect_dataset_snapshot(data_dir: Path) -> dict[str, dict[str, Any]]:
 def publish_data_release(data_dir: Path, *, reason: str) -> dict[str, Any]:
     """Publish an immutable manifest, then atomically advance current.json."""
     data_dir = Path(data_dir)
+    generations = _publication_generations(data_dir)
     release_id = uuid.uuid4().hex
     provider_audit = audit_provider_routes()
     manifest = {
@@ -163,12 +166,35 @@ def publish_data_release(data_dir: Path, *, reason: str) -> dict[str, Any]:
         "provider_audit": provider_audit,
         "datasets": collect_dataset_snapshot(data_dir),
     }
+    after = _publication_generations(data_dir)
+    captured = {
+        asset: manifest["datasets"][f"{asset}_enriched"]["generation"]
+        for asset in generations
+    }
+    if generations != after or captured != after:
+        raise DataReleaseError("enriched generation changed while collecting release metadata")
+    _validate_manifest(manifest)
     release_root = data_dir / _RELEASE_ROOT
     history_path = release_root / "manifests" / f"{release_id}.json"
     current_path = release_root / "current.json"
-    _atomic_write_json(history_path, manifest)
-    _atomic_write_json(current_path, manifest)
+    try:
+        with guard_enriched_generations(data_dir, after):
+            _atomic_write_json(history_path, manifest)
+            _atomic_write_json(current_path, manifest)
+    except EnrichedGenerationUnavailableError as exc:
+        raise DataReleaseError(str(exc)) from exc
     return manifest
+
+
+def _publication_generations(data_dir: Path) -> dict[str, str | None]:
+    generations = {}
+    for asset in ("stock", "etf"):
+        if enriched_publication_incomplete(data_dir, asset):
+            raise DataReleaseError(f"{asset} enriched publication is incomplete")
+        generations[asset] = _generation(data_dir, asset)
+        if generations[asset] is None and enriched_publication_incomplete(data_dir, asset):
+            raise DataReleaseError(f"{asset} enriched publication is incomplete")
+    return generations
 
 
 def _validate_manifest(payload: object) -> dict[str, Any]:
@@ -181,6 +207,28 @@ def _validate_manifest(payload: object) -> dict[str, Any]:
         raise DataReleaseError("data release manifest has no release_id")
     if not isinstance(payload.get("datasets"), dict):
         raise DataReleaseError("data release manifest has no datasets")
+    for name, dataset in payload["datasets"].items():
+        if not isinstance(dataset, dict):
+            raise DataReleaseError(f"invalid dataset metadata: {name}")
+        if dataset.get("state") not in ("absent", "empty", "available"):
+            raise DataReleaseError(f"invalid dataset state: {name}")
+        for field in ("partition_count", "modified_at_ns"):
+            value = dataset.get(field)
+            if value is not None and (type(value) is not int or value < 0):
+                raise DataReleaseError(f"invalid {field}: {name}")
+        latest = dataset.get("latest_partition")
+        if latest is not None and (
+            not isinstance(latest, str) or _partition_date(Path(f"date={latest}")) != latest
+        ):
+            raise DataReleaseError(f"invalid latest_partition: {name}")
+        generation = dataset.get("generation")
+        if generation is not None and (not isinstance(generation, str) or not generation):
+            raise DataReleaseError(f"invalid generation: {name}")
+    providers = payload.get("providers", {})
+    if not isinstance(providers, dict) or any(
+        not isinstance(value, str) for value in providers.values()
+    ):
+        raise DataReleaseError("invalid release providers")
     return payload
 
 
@@ -299,6 +347,10 @@ def release_health(data_dir: Path) -> dict[str, Any]:
     except DataReleaseError as exc:
         return {"status": "error", "release_id": None, "message": str(exc)}
     if release is None:
+        try:
+            _publication_generations(Path(data_dir))
+        except DataReleaseError as exc:
+            return {"status": "error", "release_id": None, "message": str(exc)}
         return {
             "status": "warning",
             "release_id": None,
@@ -307,22 +359,28 @@ def release_health(data_dir: Path) -> dict[str, Any]:
 
     datasets = release.get("datasets") or {}
     mismatches: list[str] = []
+    unavailable: list[str] = []
     for asset_type, dataset_name in (
         ("stock", "stock_enriched"),
         ("etf", "etf_enriched"),
     ):
         current = _generation(Path(data_dir), asset_type)
+        if enriched_publication_incomplete(Path(data_dir), asset_type):
+            unavailable.append(dataset_name)
         published = (datasets.get(dataset_name) or {}).get("generation")
-        if published is not None and current != published:
+        if current != published:
             mismatches.append(dataset_name)
     return {
-        "status": "warning" if mismatches else "ok",
+        "status": "error" if unavailable else ("warning" if mismatches else "ok"),
         "release_id": release["release_id"],
         "created_at": release.get("created_at"),
         "reason": release.get("reason"),
         "generation_mismatches": mismatches,
+        "unavailable_generations": unavailable,
         "message": (
-            "存在尚未纳入全局 release 的 enriched 更新"
+            "enriched 发布未完成, 需要完整重建恢复"
+            if unavailable
+            else "存在尚未纳入全局 release 的 enriched 更新"
             if mismatches
             else None
         ),

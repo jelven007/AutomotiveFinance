@@ -130,8 +130,11 @@ API 层不应直接实现供应商协议或全量数据计算。前端不应复�
   -> 缓存失效与事件通知
 ```
 
-读取方只消费已经发布的 generation。失败任务保留上一份有效数据，不能用不完整
-结果覆盖当前版本。
+读取方只消费已经发布的 generation。enriched 采用逐分区原子替换, 不具备整个
+目录的自动回滚: 中途失败可能留下不同批次的文件, 此时标记保持 `publishing`，
+读取必须拒绝。属主进程退出、读请求或单日实时写入都不能解除该状态。
+股票管道检测到中断会强制全量重建; ETF 同步先从全部本地 ETF 日线分批暂存、
+校验日期覆盖并重建。全部分区提交后才发布新 generation。
 
 稳定写入边界还会在 `DATA_DIR/data_releases/` 发布全局 release manifest：
 
@@ -142,6 +145,11 @@ API 层不应直接实现供应商协议或全量数据计算。前端不应复�
   的明确发布原因。
 - manifest 是追溯元数据，不复制或冻结 Parquet 内容。实时增量导致 generation
   超前于当前 release 时，健康检查和回测 provenance 会标记不一致。
+- 发布前后比较 stock/ETF generation, 最后在两个资产的发布锁内再次校验并写入
+  manifest/current。中断、损坏或版本变动会拒绝发布并保留原 current。
+  其他数据集仍是元数据摘要, 这不构成跨数据集的不可变数据快照。
+- 读取 manifest 校验嵌套数据集类型、状态、日期、计数、generation 和 Provider
+  映射。未完成 generation 属于 readiness 错误; 正常增量超前于 release 属于告警。
 
 ### 6.2 enriched 流水线
 

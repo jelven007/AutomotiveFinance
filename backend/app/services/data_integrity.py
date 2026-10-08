@@ -205,6 +205,12 @@ def reset_calendar_cache() -> None:
         _CAL = (0.0, None)
 
 
+def cached_trading_calendar() -> set[date]:
+    """只读已获取的交易日证据; 健康探针不得触发 Provider 请求。"""
+    with _CAL_LOCK:
+        return set(_CAL[1] or ())
+
+
 def _trading_calendar() -> set[date] | None:
     """A 股近一年交易日集合; 从未取到过 → None (调用方回退周几近似)。
 

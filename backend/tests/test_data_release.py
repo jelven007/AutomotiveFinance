@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.backtest.strategy import _strategy_definition_hash
 from app.enriched_generation import (
     bump_enriched_generation,
@@ -92,6 +94,112 @@ def test_invalid_current_manifest_fails_closed(tmp_path) -> None:
     health = data_release.release_health(tmp_path)
     assert health["status"] == "error"
     assert health["release_id"] is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("datasets", {"stock_enriched": []}),
+    ("datasets", {"stock_enriched": {"generation": []}}),
+    ("datasets", {"stock_enriched": {"state": "unknown"}}),
+    ("datasets", {"stock_enriched": {"state": []}}),
+    ("datasets", {"stock_enriched": {"partition_count": -1}}),
+    ("datasets", {"stock_enriched": {"latest_partition": "bad-date"}}),
+    ("providers", ["mootdx"]),
+])
+def test_nested_manifest_corruption_is_reported(tmp_path, monkeypatch, field, value) -> None:
+    monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
+    manifest = data_release.publish_data_release(tmp_path, reason="baseline")
+    if field == "datasets" and isinstance(value["stock_enriched"], dict):
+        value = {"stock_enriched": {**manifest["datasets"]["stock_enriched"], **value["stock_enriched"]}}
+    manifest[field] = value
+    path = tmp_path / "data_releases" / "current.json"
+    path.write_text(json.dumps(manifest))
+    assert data_release.release_health(tmp_path)["status"] == "error"
+    trace = data_release.backtest_provenance(tmp_path, asset_type="stock", config={})
+    assert trace["release_consistent"] is False
+    assert trace["release_error"]
+
+
+@pytest.mark.parametrize("marker", [
+    "{broken", '{"state":"publishing","generation":"old","owner_pid":999999999}',
+])
+def test_publish_rejects_unstable_generation_preserving_current(
+    tmp_path, monkeypatch, marker,
+) -> None:
+    monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
+    data_release.publish_data_release(tmp_path, reason="baseline")
+    current = tmp_path / "data_releases" / "current.json"
+    before = current.read_bytes()
+    (tmp_path / ".matrix_generation_stock.json").write_text(marker)
+    with pytest.raises(data_release.DataReleaseError, match="stock"):
+        data_release.publish_data_release(tmp_path, reason="financial_sync")
+    assert current.read_bytes() == before
+    assert len(list((tmp_path / "data_releases" / "manifests").glob("*.json"))) == 1
+    assert data_release.release_health(tmp_path)["status"] == "error"
+
+
+def test_publish_rejects_generation_change_during_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
+    data_release.publish_data_release(tmp_path, reason="baseline")
+    before = data_release.read_current_release(tmp_path)
+    collect = data_release.collect_dataset_snapshot
+
+    def changing_snapshot(data_dir):
+        snapshot = collect(data_dir)
+        bump_enriched_generation(data_dir)
+        return snapshot
+
+    monkeypatch.setattr(data_release, "collect_dataset_snapshot", changing_snapshot)
+    with pytest.raises(data_release.DataReleaseError):
+        data_release.publish_data_release(tmp_path, reason="changed")
+    assert data_release.read_current_release(tmp_path) == before
+
+
+def test_release_health_reports_first_generation_after_empty_baseline(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
+    data_release.publish_data_release(tmp_path, reason="empty_baseline")
+    get_enriched_generation(tmp_path)
+    assert data_release.release_health(tmp_path)["generation_mismatches"] == ["stock_enriched"]
+
+
+def test_release_guard_rechecks_after_manifest_validation(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
+    data_release.publish_data_release(tmp_path, reason="baseline")
+    current = tmp_path / "data_releases" / "current.json"
+    before = current.read_bytes()
+    validate = data_release._validate_manifest
+
+    def change_after_validation(manifest):
+        result = validate(manifest)
+        bump_enriched_generation(tmp_path)
+        return result
+
+    monkeypatch.setattr(data_release, "_validate_manifest", change_after_validation)
+    with pytest.raises(data_release.DataReleaseError, match="changed"):
+        data_release.publish_data_release(tmp_path, reason="race")
+    assert current.read_bytes() == before
+
+
+def test_release_commit_excludes_enriched_writers(tmp_path, monkeypatch):
+    from app.enriched_generation import EnrichedGenerationUnavailableError, EnrichedPublication
+
+    monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
+    write = data_release._atomic_write_json
+    attempts = []
+
+    def guarded_write(path, payload):
+        with pytest.raises(EnrichedGenerationUnavailableError, match="active"):
+            EnrichedPublication(tmp_path).begin()
+        attempts.append(path.name)
+        write(path, payload)
+
+    monkeypatch.setattr(data_release, "_atomic_write_json", guarded_write)
+    data_release.publish_data_release(tmp_path, reason="guarded")
+    assert len(attempts) == 2
+
+
+def test_unpublished_baseline_does_not_hide_incomplete_generation(tmp_path):
+    (tmp_path / ".matrix_generation_stock.json").write_text('{"state":"publishing"}')
+    assert data_release.release_health(tmp_path)["status"] == "error"
 
 
 def test_backtest_manifest_persists_compact_trace(tmp_path) -> None:

@@ -1696,7 +1696,9 @@ def run_pipeline(data_dir: Path | None = None,
         logger.warning("检测到未完成的 enriched 发布,改为全量重建")
         symbols = None
         new_dates_only = False
-    publication = EnrichedPublication(d, "stock", recover=True)
+    publication = EnrichedPublication(
+        d, "stock", recover=not symbols and not new_dates_only,
+    )
     daily_dir = d / "kline_daily"
     enriched_base = d / "kline_daily_enriched"
     factor_path = d / "adj_factor" / "all.parquet"
@@ -2005,6 +2007,9 @@ def run_pipeline(data_dir: Path | None = None,
                     publication.write_parquet(date_df.sort(["symbol"]), out)
             gc.collect()
             logger.info("全量暂存合并完成: %d 个日期分区", len(unique_dates))
+    except BaseException:
+        publication.abandon()
+        raise
     finally:
         # 无论成功/失败/取消都清掉本次暂存 (历史残留由 _sweep_stale_staging 兜底)
         if staging_dir is not None:

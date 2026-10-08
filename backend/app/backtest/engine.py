@@ -302,9 +302,8 @@ class PanelCache:
         return f"{asset_type}:{generation or 'unmanaged'}:{h}:{start}:{end}:{cols}"
 
 
-# 等待进行中 enriched 发布的上限与轮询间隔。孤儿标记由 get_enriched_generation
-# 在读取时直接自愈, 因此这里等到的 EnrichedGenerationUnavailableError 意味着
-# 发布方确实存活 —— 对回测/优化这类长任务, 有界等待优于立即失败。仅用于
+# 等待 enriched 发布的上限与轮询间隔。孤儿标记也保持不可读, 直到全量重建
+# 完成; 有界等待允许进行中的发布完成, 超时则明确失败。仅用于
 # worker 任务路径 (矩阵加载), 实时热路径不得调用 data_generation_await。
 _GENERATION_WAIT_TIMEOUT_S = 300.0
 _GENERATION_POLL_S = 1.0

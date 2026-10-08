@@ -128,6 +128,24 @@ curl -fsS http://127.0.0.1:3018/health/ready
 非阻断漂移返回 HTTP 200 且 `status=degraded`。它不向外部 Provider 发网络请求，
 避免健康探针消耗额度。
 
+每个检查独立捕获异常: 单项读取失败仍返回完整 `checks` 和 HTTP 503。
+数据新鲜度按北京时间判断, 18:00 前保留盘后处理宽限, 不要求当天完整分区。
+`reference_trading_date` 来自已缓存交易日历及本地指数日期证据，
+`observed_trading_lag` 是已确认落后的交易日数; `calendar_lag_days` 仅作展示。
+同时检查股票日线、enriched、分钟的缺失、未来日期与落后情况。
+
+`calendar_coverage=unknown` 表示已有日历无法覆盖判断日期, 不等于数据过期，
+也不能据此断言休市。健康接口不会主动刷新日历。长假期间应结合数据同步任务
+已获取的交易日历核验, 不通过修改分区日期或重写 release 来消除告警。
+
+`checks.data_release.unavailable_generations` 非空表示 enriched 尚未完成发布。
+股票通过盘后指标重算自动切换全量恢复; ETF 在下一次日线同步前执行完整本地
+重建 (`services.index_sync.rebuild_etf_enriched`)。源日线缺失或重建失败会继续保持
+不可读, 应先恢复原始日线或完整备份。不要删除 generation 标记或手工改为
+`ready`: 逐分区写入中断后, 磁盘文件未必属于同一完整批次。
+完整重建成功后, 由正常发布流程推进全局 release; 仅 generation 漂移且数据可读
+时是未纳入基线的增量告警, 与发布中断区别处理。
+
 `mode` 会随数据源配置变化；示例值不是生产期望值。上线检查还应检查：
 
 1. 页面可加载并能登录。
