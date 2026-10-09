@@ -146,7 +146,7 @@ docker image inspect ghcr.io/shy3130/tick-stock-panel:<commit-sha>
 
 ```bash
 gh workflow run release.yml \
-  -f version=v0.3.3 \
+  -f version=v0.3.4 \
   -f platforms=windows \
   -f prerelease=false
 ```
@@ -159,8 +159,10 @@ Silicon。workflow 会：
 3. 在同一质量门中执行前端 frozen 安装、Vitest、ESLint 和生产构建。
 4. 质量门通过后构建前端和各平台后端运行环境。
 5. 使用 PyInstaller 构建应用。
-6. 生成所选平台安装包并上传 GitHub Release。
-7. 汇总 Release 上已存在的目标资产，生成带 SHA-256 的 `latest.json`。
+6. Windows runner 验证 x64/Windows 10+ 目标约束，运行便携版 EXE 自检。
+7. Windows 安装包执行静默安装、启动自检、静默卸载和用户数据保留验证。
+8. 生成所选平台安装包并上传 GitHub Release。
+9. 汇总 Release 上已存在的目标资产，生成带 SHA-256 的 `latest.json`。
 
 允许分批补齐平台，因此单个平台成功不代表所有平台已发布。每次发布后检查：
 
@@ -315,11 +317,12 @@ Silicon。workflow 会：
 
 ## 15. 当前流程缺口
 
-以下能力在 `0.3.3` 尚未自动化，发布时需人工控制：
+以下能力尚未自动化，发布时需人工控制：
 
 - 没有自动化 Web 端到端和视觉回归门禁。
 - 没有真实 Provider 的稳定发布环境。
-- 没有桌面安装、升级和卸载的真实平台自动化烟测。
+- Windows 已有原生 runner 安装/启动/卸载烟测，但没有 GUI 自动化、覆盖升级及
+  Windows 10/11 消费版真机矩阵；macOS/Linux 桌面安装仍需人工验证。
 - 没有自动备份、恢复验证、灰度和业务回滚。
 - 没有集中监控、告警、错误聚合和运营指标。
 - 没有自动生成完整 changelog 与需求追踪矩阵。

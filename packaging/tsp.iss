@@ -38,6 +38,11 @@ AppName={#MyAppName}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+; 仅支持 Windows 10/11 x64。x64compatible 同时兼容原生 x64 与 Windows 11
+; ARM64 上的 x64 仿真环境，但拒绝 32 位 Windows。
+MinVersion=10.0
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 ; 默认装到 D 盘 (非系统盘), 用户可在向导中改任意位置
 ; 若 D 盘不存在, [Code] 段 InitializeWizard 会自动回退到用户目录
 DefaultDirName=D:\TSP
@@ -93,12 +98,6 @@ Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; 安装完成后启动应用
-; shellexec: 部分机器对 exe 路径存有「以管理员身份运行」兼容标志/策略要求提权,
-; CreateProcess 无法弹 UAC 会直接报错误码 740; ShellExecute 遇提权正常弹 UAC,
-; asInvoker 场景行为不变。
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
-
 ; 安装完成后启动应用
 ; shellexec: 部分机器对 exe 路径存有「以管理员身份运行」兼容标志/策略要求提权,
 ; CreateProcess 无法弹 UAC 会直接报错误码 740; ShellExecute 遇提权正常弹 UAC,

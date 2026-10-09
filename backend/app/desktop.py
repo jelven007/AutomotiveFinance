@@ -15,19 +15,32 @@
 """
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
+import os
 import socket
 import sys
 import threading
 import time
 import traceback
-from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "TSP"
 _BASE_PORT = 3018
 _PORT_PROBE_RANGE = 50  # 从 3018 起最多试 50 个端口
+_SMOKE_TEST_ENV = "TSP_DESKTOP_SMOKE_TEST"
+_MOOTDX_DATASETS = {
+    "realtime",
+    "daily",
+    "adj_factor",
+    "minute",
+    "depth5",
+    "financial",
+    "full_minute",
+}
 
 
 def _ensure_data_dir_writable() -> None:
@@ -44,7 +57,7 @@ def _ensure_data_dir_writable() -> None:
         probe = data_root / ".write_probe"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("数据目录不可写, 桌面版无法运行: %s (%s)", data_root, e)
         raise
 
@@ -63,7 +76,7 @@ def _acquire_single_instance() -> bool:
         try:
             pid_str = lock_path.read_text(encoding="utf-8").strip()
             pid = int(pid_str) if pid_str.isdigit() else None
-        except Exception:  # noqa: BLE001
+        except Exception:
             pid = None
 
         if pid is not None and _pid_alive(pid):
@@ -80,10 +93,8 @@ def _release_single_instance() -> None:
     from app.config import settings
 
     lock_path = settings.data_dir / ".desktop.lock"
-    try:
+    with contextlib.suppress(Exception):
         lock_path.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def _guard_streams() -> None:
@@ -100,8 +111,6 @@ def _guard_streams() -> None:
     修法: console=False 下把 stdout/stderr 换成丢弃写入的空对象 (devnull),
     让 logging / reconfigure / 任何 print 都安全落地。console=True 不动 (有真控制台)。
     """
-    import os
-
     class _NullStream:
         """丢弃所有写入的空流 (替代 None 的 stdout/stderr)。"""
         def write(self, _s): return 0
@@ -146,7 +155,7 @@ def _setup_logging() -> None:
             )
         )
         logging.getLogger().addHandler(handler)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         # 日志落盘失败不阻断启动 (开发模式 data_dir 可能不可写)
         logger.warning("日志文件初始化失败, 仅输出到 stderr: %s", e)
 
@@ -165,7 +174,7 @@ def _show_crash(title: str, text: str) -> None:
             import ctypes
 
             ctypes.windll.user32.MessageBoxW(0, text, title, 0x10)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error("弹框失败 (已写日志文件): %s", e)
     else:
         logger.error("%s: %s", title, text)
@@ -200,7 +209,6 @@ def _find_free_port(start: int, count: int = _PORT_PROBE_RANGE) -> int:
     """从 start 起找第一个可用端口。全部被占则返回 start (交给 uvicorn 报错)。"""
     for port in range(start, start + count):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(("127.0.0.1", port))
                 return port
@@ -209,7 +217,11 @@ def _find_free_port(start: int, count: int = _PORT_PROBE_RANGE) -> int:
     return start
 
 
-def _run_uvmicorn(port: int, ready_event: threading.Event) -> None:
+def _run_uvmicorn(
+    port: int,
+    ready_event: threading.Event,
+    server_ref: dict[str, Any] | None = None,
+) -> None:
     """后台线程: 启动 uvicorn 服务。ready_event 在线程退出时置位 (通知主线程)。"""
     import uvicorn
 
@@ -232,6 +244,8 @@ def _run_uvmicorn(port: int, ready_event: threading.Event) -> None:
         loop="auto",
     )
     server = uvicorn.Server(config)
+    if server_ref is not None:
+        server_ref["server"] = server
 
     # 线程结束时通知主线程 (无论正常退出还是异常)
     def _signal_done(*exc):
@@ -249,17 +263,27 @@ def _run_uvmicorn(port: int, ready_event: threading.Event) -> None:
         ready_event.set()
 
 
-def _wait_for_server(port: int, timeout: float = 60.0) -> bool:
+def _wait_for_server(
+    port: int,
+    timeout: float = 60.0,
+    server_ref: dict[str, Any] | None = None,
+) -> bool:
     """轮询 health 接口直到后端就绪或超时。
 
-    比 monkey-patch uvicorn 内部方法更健壮, 不依赖版本内部实现。
+    同时要求当前进程创建的 uvicorn.Server 已标记 started, 避免机器上另一个
+    服务恰好占用/复用了目标端口时误判为当前 EXE 已启动。
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     url = f"http://127.0.0.1:{port}/health"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if server_ref is not None:
+            server = server_ref.get("server")
+            if server is None or not server.started:
+                time.sleep(0.2)
+                continue
         try:
             with urllib.request.urlopen(url, timeout=2) as r:
                 if r.status == 200:
@@ -270,11 +294,68 @@ def _wait_for_server(port: int, timeout: float = 60.0) -> bool:
     return False
 
 
+def _validate_smoke_plugins(plugins: list[dict]) -> None:
+    """确认默认行情插件在冻结产物内完整可加载。"""
+    mootdx = next((item for item in plugins if item.get("name") == "mootdx"), None)
+    if mootdx is None:
+        raise RuntimeError("mootdx plugin manifest is missing")
+    if not mootdx.get("available"):
+        raise RuntimeError(f"mootdx plugin is unavailable: {mootdx.get('status')}")
+    datasets = set(mootdx.get("datasets") or [])
+    if datasets != _MOOTDX_DATASETS:
+        raise RuntimeError(
+            f"mootdx datasets mismatch: expected={sorted(_MOOTDX_DATASETS)}, "
+            f"actual={sorted(datasets)}"
+        )
+
+
+def _run_smoke_checks(port: int) -> None:
+    """在不打开 GUI 的情况下验证冻结产物的关键运行时链路。"""
+    import urllib.request
+
+    base_url = f"http://127.0.0.1:{port}"
+
+    with urllib.request.urlopen(f"{base_url}/health", timeout=10) as response:
+        health = json.loads(response.read())
+        if response.status != 200 or health.get("status") != "ok":
+            raise RuntimeError(f"health check failed: status={response.status}, body={health}")
+
+    with urllib.request.urlopen(base_url, timeout=10) as response:
+        index = response.read().decode("utf-8", errors="replace").lower()
+        if response.status != 200 or "<html" not in index:
+            raise RuntimeError(f"frontend check failed: status={response.status}")
+
+    with urllib.request.urlopen(f"{base_url}/openapi.json", timeout=15) as response:
+        schema = json.loads(response.read())
+        paths = schema.get("paths") or {}
+        required_paths = {"/api/auth/status", "/api/backtest/run", "/api/capabilities"}
+        missing = sorted(required_paths - set(paths))
+        if response.status != 200 or missing:
+            raise RuntimeError(
+                f"OpenAPI check failed: status={response.status}, missing={missing}"
+            )
+
+    from app.data_providers import custom as custom_sources
+
+    _validate_smoke_plugins(custom_sources.list_plugins())
+    logger.info("DESKTOP_SMOKE_TEST_OK")
+
+
+def _stop_server(server_ref: dict[str, Any], server_thread: threading.Thread) -> None:
+    """请求 uvicorn 退出并等待 lifespan 清理完成。"""
+    server = server_ref.get("server")
+    if server is not None:
+        server.should_exit = True
+    server_thread.join(timeout=15)
+    if server_thread.is_alive():
+        logger.warning("uvicorn 未在 15 秒内退出, 进程将强制结束")
+
+
 def _open_window(url: str) -> None:
     """主线程: 用 pywebview 打开桌面窗口。"""
     import webview  # type: ignore[import-not-found]
 
-    window = webview.create_window(
+    webview.create_window(
         _APP_NAME,
         url,
         width=1440,
@@ -304,6 +385,10 @@ def main() -> int:
     # 放在 basicConfig 之后 (它先建好 root logger 的格式), 这里只追加 handler。
     _setup_logging()
 
+    smoke_test = os.getenv(_SMOKE_TEST_ENV, "").strip() == "1"
+    server_ref: dict[str, Any] = {}
+    server_thread: threading.Thread | None = None
+
     try:
         _ensure_data_dir_writable()
     except Exception:
@@ -321,16 +406,20 @@ def main() -> int:
         # 后台线程起 uvicorn
         ready = threading.Event()
         server_thread = threading.Thread(
-            target=_run_uvmicorn, args=(port, ready), daemon=True,
+            target=_run_uvmicorn, args=(port, ready, server_ref), daemon=True,
             name="uvicorn",
         )
         server_thread.start()
 
         # 轮询 health 接口等后端就绪 (含 lifespan 初始化, 最多 60s)
-        if not _wait_for_server(port, timeout=60.0):
+        if not _wait_for_server(port, timeout=60.0, server_ref=server_ref):
             logger.error("后端启动超时, 桌面版退出")
             _release_single_instance()
             return 1
+
+        if smoke_test:
+            _run_smoke_checks(port)
+            return 0
 
         url = f"http://127.0.0.1:{port}"
         logger.info("打开桌面窗口: %s", url)
@@ -346,9 +435,12 @@ def main() -> int:
         # 写完整 traceback 到 data/desktop.log, 并弹原生 MessageBox 让用户截图反馈。
         # 必须排在 KeyboardInterrupt 之后 —— Exception 是基类, 在前会遮蔽它。
         logger.exception("桌面客户端启动失败")
-        _show_crash("TSP 启动失败", traceback.format_exc())
+        if not smoke_test:
+            _show_crash("TSP 启动失败", traceback.format_exc())
         return 1
     finally:
+        if server_thread is not None:
+            _stop_server(server_ref, server_thread)
         _release_single_instance()
 
 

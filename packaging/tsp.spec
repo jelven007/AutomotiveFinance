@@ -16,6 +16,7 @@ import sys
 from importlib.util import find_spec
 from pathlib import Path
 
+import yaml
 from PyInstaller.utils.hooks import (
     collect_all,
     collect_submodules,
@@ -32,6 +33,7 @@ ROOT = Path(SPECPATH).parent
 FRONTEND_DIST = str(ROOT / "frontend" / "dist")
 TIERS_YAML = str(ROOT / "tiers.yaml")
 BUILTIN_STRATEGIES = str(ROOT / "backend" / "app" / "strategy" / "builtin")
+BUILTIN_PLUGINS = ROOT / "backend" / "app" / "plugins"
 # 图标按平台选: Windows 用 brand/icon.ico, macOS 用 brand/icon.icns —
 # 两者均由 brand/png/logo-tile-light-512.png 派生 (浅色圆角卡版, 品牌资产唯一来源,
 # 见 brand/README 接入指引), 无需 CI 现场生成。
@@ -43,7 +45,9 @@ datas = []
 binaries = []
 hiddenimports = []
 
-for pkg in ("polars", "pyarrow", "duckdb", "fastexcel"):
+for pkg in ("polars", "pyarrow", "duckdb", "fastexcel", "mootdx", "tdxpy"):
+    if find_spec(pkg) is None:
+        raise RuntimeError(f"desktop packaging dependency is missing: {pkg}")
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
@@ -62,18 +66,19 @@ for pkg in ("_polars_runtime_32", "_polars_runtime_compat"):
 # Polars 新 ABI 运行时由加载器选择，需显式收集子模块。
 hiddenimports += collect_submodules("polars")
 
-# ── 内置可选插件 (app/plugins/*) ─────────────────────────────────────
+# ── 内置插件 (app/plugins/*) ─────────────────────────────────────────
 # loader._load_builtin_plugins() 在文件系统扫 <_internal>/app/plugins/*/plugin.yaml,
 # entry 又是 importlib 字符串动态导入 — 两条链路静态分析都看不见, 必须双声明:
 # datas 把清单 yaml 落盘 (frozen 下 plugins_dir() 恰好解析到 _internal/app/plugins),
 # hiddenimports 把 provider/client 塞进 PYZ。
-datas += [
-    (str(ROOT / "backend" / "app" / "plugins" / "fuyao" / "plugin.yaml"), "app/plugins/fuyao"),
-]
-hiddenimports += [
-    "app.plugins.fuyao.provider",
-    "app.plugins.fuyao.client",
-]
+for manifest_path in sorted(BUILTIN_PLUGINS.glob("*/plugin.yaml")):
+    plugin_name = manifest_path.parent.name
+    datas.append((str(manifest_path), f"app/plugins/{plugin_name}"))
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    for ref_name in ("entry", "check"):
+        ref = str(manifest.get(ref_name) or "")
+        if ":" in ref:
+            hiddenimports.append(ref.split(":", 1)[0])
 
 # ── pywebview 平台后端 (动态导入, PyInstaller 默认抓不到) ────────────
 hiddenimports += collect_submodules("webview")
@@ -122,7 +127,7 @@ for pkg in (
     "tickflow",  # tickflow/__version__.py 用 importlib.metadata 读版本
     "uvicorn", "polars", "duckdb", "pyarrow", "httpx", "numpy", "pandas",
     "openai", "platformdirs", "winotify", "plyer", "apscheduler",
-    "python-dotenv", "fastexcel",
+    "python-dotenv", "fastexcel", "mootdx", "tdxpy",
 ):
     datas += _safe_metadata(pkg)
 

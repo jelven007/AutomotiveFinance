@@ -125,8 +125,9 @@ tag 和手动构建会在 workflow 内重新运行同等的后端与前端质量
 
 `.github/workflows/release.yml` 的手动桌面发版也有独立质量门：后端执行 frozen
 依赖安装和全量 pytest，前端执行 frozen 安装、Vitest、ESLint 与生产构建。只有
-版本校验和质量门都通过后，Windows、macOS、Linux 打包矩阵才会启动。安装、升级
-和卸载烟测仍需在真实目标平台人工执行。
+版本校验和质量门都通过后，Windows、macOS、Linux 打包矩阵才会启动。Windows
+runner 会实际运行 PyInstaller 便携版，并对 Inno Setup 产物执行静默安装、启动、
+健康检查、默认 mootdx 插件检查、卸载及用户数据保留验证。
 
 当前 CI 不自动执行以下检查，发布负责人需按变更风险补充：
 
@@ -134,7 +135,7 @@ tag 和手动构建会在 workflow 内重新运行同等的后端与前端质量
 - 浏览器端到端测试和视觉回归。
 - 真实 Provider 网络、额度、覆盖率和 09:25 终态可靠性。
 - Docker 多架构镜像运行烟测。
-- 桌面安装、升级和卸载烟测。
+- 桌面 GUI 交互、覆盖升级，以及 Windows 10/11 消费版真机验证。
 - 文档相对链接和代码围栏检查。
 - 生产规模性能、长时间稳定性、备份恢复和故障演练。
 
@@ -243,7 +244,7 @@ mootdx 的专项验证见[mootdx 数据源说明](./mootdx-data-source.md)。
 | --- | --- |
 | GHCR `linux/amd64` | 拉取、启动、健康检查、数据卷、重启 |
 | GHCR `linux/arm64` | 拉取或构建、启动、健康检查、数据卷 |
-| Windows x64 | 安装、启动、健康检查、数据目录、升级、卸载后数据策略 |
+| Windows x64 | CI 自动安装、启动、健康检查、数据目录、卸载后数据策略；人工 GUI 与覆盖升级 |
 | macOS ARM64 | DMG 打开、拖入 Applications、首次启动、数据目录 |
 | Linux x64 桌面包 | 解压、启动、健康检查、数据目录 |
 

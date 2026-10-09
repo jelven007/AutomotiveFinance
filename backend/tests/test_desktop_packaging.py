@@ -1,0 +1,64 @@
+"""Desktop runtime and Windows packaging regression tests."""
+
+from __future__ import annotations
+
+import socket
+from pathlib import Path
+
+import pytest
+
+from app import desktop
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_smoke_plugin_validation_accepts_complete_mootdx() -> None:
+    desktop._validate_smoke_plugins(
+        [
+            {
+                "name": "mootdx",
+                "available": True,
+                "datasets": sorted(desktop._MOOTDX_DATASETS),
+            }
+        ]
+    )
+
+
+def test_find_free_port_skips_an_active_listener() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        occupied = listener.getsockname()[1]
+
+        assert desktop._find_free_port(occupied, count=20) != occupied
+
+
+@pytest.mark.parametrize(
+    "plugin",
+    [
+        None,
+        {"name": "mootdx", "available": False, "status": "missing"},
+        {"name": "mootdx", "available": True, "datasets": ["daily"]},
+    ],
+)
+def test_smoke_plugin_validation_rejects_incomplete_mootdx(plugin: dict | None) -> None:
+    with pytest.raises(RuntimeError, match="mootdx"):
+        desktop._validate_smoke_plugins([] if plugin is None else [plugin])
+
+
+def test_windows_installer_contract() -> None:
+    script = (ROOT / "packaging" / "tsp.iss").read_text(encoding="utf-8")
+    run_section = script.split("[Run]", 1)[1].split("[UninstallRun]", 1)[0]
+
+    assert "MinVersion=10.0" in script
+    assert "ArchitecturesAllowed=x64compatible" in script
+    assert "ArchitecturesInstallIn64BitMode=x64compatible" in script
+    assert run_section.count('Filename: "{app}\\{#MyAppExeName}"') == 1
+
+
+def test_pyinstaller_collects_default_data_provider() -> None:
+    spec = (ROOT / "packaging" / "tsp.spec").read_text(encoding="utf-8")
+
+    assert '"mootdx", "tdxpy"' in spec
+    assert 'BUILTIN_PLUGINS.glob("*/plugin.yaml")' in spec
+    assert '"mootdx", "tdxpy",' in spec

@@ -18,7 +18,7 @@ on:
       version:
         description: '版本号 (如 v0.1.33, 用作 Release tag 和标题; 必须与 frontend/package.json 的 version 一致, 否则流水线直接失败)'
         required: true
-        default: 'v0.3.3'
+        default: 'v0.3.4'
       platforms:
         description: '要构建的平台 (逗号分隔: windows,macos,linux)'
         required: true
@@ -66,10 +66,10 @@ jobs:
           import json, sys
           requested = '${{ github.event.inputs.platforms }}'.split(',')
           requested = [r.strip() for r in requested if r.strip()]
-          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.3 → 0.3.3
+          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.4 → 0.3.4
           all_platforms = json.loads('''$ALL''')
           selected = [p for p in all_platforms if p['platform'] in requested]
-          # 产物文件名带版本号 (TSP-Setup-x64-0.3.3.exe): 用户下载后一眼可辨版本
+          # 产物文件名带版本号 (TSP-Setup-x64-0.3.4.exe): 用户下载后一眼可辨版本
           for p in selected:
               stem, _, ext = p['artifact'].rpartition('.')
               p['artifact'] = f'{stem}-{ver}.{ext}'
@@ -177,6 +177,14 @@ jobs:
         # 不加 --extra backtest, 主包不含 vectorbt/numba/llvmlite
         run: uv sync --no-dev --extra desktop --extra legacy-cpu
 
+      - name: 安装内置 mootdx 行情依赖
+        working-directory: backend
+        # 与 Dockerfile 保持同一安装策略: mootdx 本体跳过过时的 httpx<0.26
+        # 传递约束，继续使用主项目锁定的 httpx；其余运行时依赖正常安装。
+        run: |
+          uv pip install --python .venv -r app/plugins/mootdx/requirements.txt
+          uv pip install --python .venv --no-deps -r app/plugins/mootdx/requirements-no-deps.txt
+
       - name: 安装 PyInstaller
         # 必须装进 backend 的 uv 环境 (pywebview/polars 等依赖都在那里),
         # 否则根目录 uv run 找不到依赖, 打包出来的产物启动即崩。
@@ -211,6 +219,19 @@ jobs:
             throw "PyInstaller output is missing Polars runtime(s): $($missing -join ', ')"
           }
 
+      - name: 检查 Windows x64 构建环境
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $major = [int]($os.Version.Split('.')[0])
+          if ($major -lt 10) {
+            throw "Windows 10+ is required, runner version is $($os.Version)"
+          }
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
+            throw "Windows x64 runner is required, got $env:PROCESSOR_ARCHITECTURE"
+          }
+
       - name: 安装 Inno Setup (仅 Windows)
         if: matrix.platform == 'windows'
         # Inno Setup 6: 把 PyInstaller 产出封装成单文件安装包
@@ -226,6 +247,122 @@ jobs:
           # 把生成的 Setup.exe 移到工作区根 (Release 上传用)
           Move-Item packaging/Output/TSP-Setup-$ver.exe ${{ matrix.artifact }} -Force
         shell: pwsh
+
+      - name: 运行 Windows 便携版 EXE 冒烟
+        if: matrix.platform == 'windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $artifactDir = New-Item -ItemType Directory -Force 'artifacts/windows-smoke'
+          $exe = (Resolve-Path 'backend/dist/TSP/TSP.exe').Path
+          $dataDir = Join-Path (Split-Path $exe) 'data'
+          Remove-Item $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+          $env:TSP_DESKTOP_SMOKE_TEST = '1'
+          try {
+            $process = Start-Process -FilePath $exe -PassThru
+            if (-not $process.WaitForExit(240000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw 'Portable TSP.exe smoke test timed out after 240 seconds'
+            }
+            if ($process.ExitCode -ne 0) {
+              throw "Portable TSP.exe smoke test failed with exit code $($process.ExitCode)"
+            }
+            $log = Join-Path $dataDir 'desktop.log'
+            if (-not (Test-Path $log) -or -not (Select-String $log 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
+              throw 'Portable smoke success marker is missing from desktop.log'
+            }
+          }
+          finally {
+            Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
+            if (Test-Path (Join-Path $dataDir 'desktop.log')) {
+              Copy-Item (Join-Path $dataDir 'desktop.log') (Join-Path $artifactDir 'portable-desktop.log') -Force
+            }
+            Remove-Item $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: 静默安装、运行和卸载 Windows 安装包
+        if: matrix.platform == 'windows'
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $artifactDir = New-Item -ItemType Directory -Force 'artifacts/windows-smoke'
+          $installDir = Join-Path $env:RUNNER_TEMP 'TSP-installed-smoke'
+          $installLog = Join-Path $artifactDir 'installer.log'
+          $uninstallLog = Join-Path $artifactDir 'uninstaller.log'
+          $installer = (Resolve-Path '${{ matrix.artifact }}').Path
+          Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+          try {
+            $install = Start-Process -FilePath $installer -ArgumentList @(
+              '/VERYSILENT',
+              '/SUPPRESSMSGBOXES',
+              '/NORESTART',
+              "/DIR=$installDir",
+              "/LOG=$installLog"
+            ) -Wait -PassThru
+            if ($install.ExitCode -ne 0) {
+              throw "Silent install failed with exit code $($install.ExitCode)"
+            }
+
+            $exe = Join-Path $installDir 'TSP.exe'
+            if (-not (Test-Path $exe)) {
+              throw "Installed executable is missing: $exe"
+            }
+            $env:TSP_DESKTOP_SMOKE_TEST = '1'
+            $app = Start-Process -FilePath $exe -PassThru
+            if (-not $app.WaitForExit(240000)) {
+              Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+              throw 'Installed TSP.exe smoke test timed out after 240 seconds'
+            }
+            if ($app.ExitCode -ne 0) {
+              throw "Installed TSP.exe smoke test failed with exit code $($app.ExitCode)"
+            }
+
+            $dataDir = Join-Path $installDir 'data'
+            $desktopLog = Join-Path $dataDir 'desktop.log'
+            if (-not (Test-Path $desktopLog) -or -not (Select-String $desktopLog 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
+              throw 'Installed smoke success marker is missing from desktop.log'
+            }
+            Copy-Item $desktopLog (Join-Path $artifactDir 'installed-desktop.log') -Force
+            $marker = Join-Path $dataDir 'ci-uninstall-preserve.txt'
+            Set-Content -Path $marker -Value 'preserve' -Encoding Ascii
+
+            $uninstaller = Get-ChildItem $installDir -Filter 'unins*.exe' | Select-Object -First 1
+            if (-not $uninstaller) {
+              throw 'Inno Setup uninstaller is missing'
+            }
+            Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
+            $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @(
+              '/VERYSILENT',
+              '/SUPPRESSMSGBOXES',
+              '/NORESTART',
+              "/LOG=$uninstallLog"
+            ) -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Silent uninstall failed with exit code $($uninstall.ExitCode)"
+            }
+            if (Test-Path $exe) {
+              throw 'Uninstall left the application executable behind'
+            }
+            if (-not (Test-Path $marker)) {
+              throw 'Uninstall removed user data without explicit confirmation'
+            }
+          }
+          finally {
+            Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
+            $remainingLog = Join-Path $installDir 'data/desktop.log'
+            if ((Test-Path $remainingLog) -and -not (Test-Path (Join-Path $artifactDir 'installed-desktop.log'))) {
+              Copy-Item $remainingLog (Join-Path $artifactDir 'installed-desktop.log') -Force
+            }
+            Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: 上传 Windows 安装烟测日志
+        if: always() && matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke-logs-${{ needs.prepare.outputs.ver }}
+          path: artifacts/windows-smoke
+          if-no-files-found: warn
 
       - name: 生成 DMG (macOS)
         if: matrix.platform == 'macos'
@@ -329,7 +466,7 @@ jobs:
           rel = json.loads(os.environ["RELEASE_JSON"])
 
           # version 去掉 v 前缀, 与 package.json 语义版本一致
-          # (产物文件名 TSP-Setup-x64-0.3.3.exe 用的就是不带 v 的版本)
+          # (产物文件名 TSP-Setup-x64-0.3.4.exe 用的就是不带 v 的版本)
           version = tag[1:] if tag.startswith("v") else tag
 
           # 资产文件名 → 渠道名 (客户端按渠道取下载地址); 文件名带版本号, 按当前 tag 拼
