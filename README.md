@@ -642,20 +642,6 @@ PORT=3018                      # 服务端口
 
 ---
 
-## ❤️ 支持项目
-
-<div align="center">
-
-<sub>如果这个项目对你有帮助,欢迎请作者喝杯咖啡 ☕</sub>
-
-<img src="./assets/support/wechat-appreciation.jpg" alt="微信赞赏码 · 感谢道友支持 愿一路长红" height="280" />
-
-<sub>作者精力有限,优先响应赞助回馈,希望理解 📈</sub>
-
-</div>
-
-## 💬 交流群
-
 <div align="center">
 
 <sub>欢迎加入交流群,一起讨论交流 · 个人维护了一些个性化接口统一公布在群公告</sub>
@@ -687,8 +673,6 @@ PORT=3018                      # 服务端口
 ---
 
 <div align="center">
-
-**⭐ 觉得有用?点个 Star 就是最大的支持 · fork 时也请顺手点个 star**
 
 **[⬆️ 回到顶部](#-tsp--a股智能量化工作台)**
 
