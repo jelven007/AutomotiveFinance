@@ -268,7 +268,7 @@ jobs:
               throw "Portable TSP.exe smoke test failed with exit code $($process.ExitCode)"
             }
             $log = Join-Path $dataDir 'desktop.log'
-            if (-not (Test-Path $log) -or -not (Select-String $log 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
+            if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
               throw 'Portable smoke success marker is missing from desktop.log'
             }
           }
@@ -319,7 +319,7 @@ jobs:
 
             $dataDir = Join-Path $installDir 'data'
             $desktopLog = Join-Path $dataDir 'desktop.log'
-            if (-not (Test-Path $desktopLog) -or -not (Select-String $desktopLog 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
+            if (-not (Test-Path $desktopLog) -or -not (Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
               throw 'Installed smoke success marker is missing from desktop.log'
             }
             Copy-Item $desktopLog (Join-Path $artifactDir 'installed-desktop.log') -Force

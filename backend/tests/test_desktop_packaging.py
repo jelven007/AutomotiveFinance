@@ -62,3 +62,14 @@ def test_pyinstaller_collects_default_data_provider() -> None:
     assert '"mootdx", "tdxpy"' in spec
     assert 'BUILTIN_PLUGINS.glob("*/plugin.yaml")' in spec
     assert '"mootdx", "tdxpy",' in spec
+
+
+def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert workflow.count(
+        "Select-String -Path $log -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
+    ) == 1
+    assert workflow.count(
+        "Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
+    ) == 1
