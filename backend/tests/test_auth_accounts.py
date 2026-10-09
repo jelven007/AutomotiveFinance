@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stat
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,8 +11,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app import config as app_config
+from app import secrets_store
 from app.api import auth as auth_api
-from app.services import auth_verification, email_adapter
+from app.services import auth_verification, email_adapter, preferences
 
 
 @pytest.fixture(autouse=True)
@@ -333,6 +335,148 @@ def test_registration_code_endpoint_sends_and_enforces_cooldown(
         },
     )
     assert registered.status_code == 201
+
+
+def test_desktop_registration_smtp_setup_tests_before_persisting(
+    isolated_auth_store: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = isolated_auth_store
+    auth.set_registration_secret("test-registration-secret")
+    monkeypatch.setattr(app_config, "_IS_FROZEN", True)
+    deliveries: list[tuple[dict, str, str, str]] = []
+
+    def fake_send(
+        config: dict,
+        password: str,
+        subject: str,
+        body: str,
+        *,
+        max_attempts: int,
+    ) -> bool:
+        assert max_attempts == 1
+        deliveries.append((config, password, subject, body))
+        return True
+
+    monkeypatch.setattr(email_adapter, "send_email", fake_send)
+    app = FastAPI()
+    app.include_router(auth_api.router)
+    client = TestClient(app)
+
+    before = client.get("/api/auth/status").json()
+    assert before["registration_email_configurable"] is True
+    assert before["registration_email_configured"] is False
+
+    response = client.post(
+        "/api/auth/register/email/setup",
+        json={
+            "email": "New.User@example.com",
+            "registration_secret": "test-registration-secret",
+            "host": " smtp.example.com ",
+            "port": 465,
+            "security": "ssl",
+            "username": "Sender@example.com",
+            "password": "smtp-secret",
+            "from_address": "Sender@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["registration_email_configured"] is True
+    assert "smtp-secret" not in response.text
+    config, password, subject, body = deliveries[0]
+    assert config["host"] == "smtp.example.com"
+    assert config["to_addresses"] == ["new.user@example.com"]
+    assert password == "smtp-secret"
+    assert "配置测试" in subject
+    assert "真实投递" in body
+
+    preferences_path = app_config.settings.data_dir / "user_data" / "preferences.json"
+    secrets_path = app_config.settings.data_dir / "user_data" / "secrets.json"
+    saved_preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+    saved_secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
+    assert saved_preferences["email_smtp_config"]["host"] == "smtp.example.com"
+    assert "smtp-secret" not in preferences_path.read_text(encoding="utf-8")
+    assert saved_secrets["email_smtp_password"] == "smtp-secret"
+    assert stat.S_IMODE(secrets_path.stat().st_mode) == 0o600
+
+    after = client.get("/api/auth/status").json()
+    assert after["registration_email_configured"] is True
+
+
+def test_failed_desktop_registration_smtp_setup_does_not_persist(
+    isolated_auth_store: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = isolated_auth_store
+    auth.set_registration_secret("test-registration-secret")
+    monkeypatch.setattr(app_config, "_IS_FROZEN", True)
+    monkeypatch.setattr(email_adapter, "send_email", lambda *args, **kwargs: False)
+    app = FastAPI()
+    app.include_router(auth_api.router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/auth/register/email/setup",
+        json={
+            "email": "user@example.com",
+            "registration_secret": "test-registration-secret",
+            "host": "smtp.example.com",
+            "port": 465,
+            "security": "ssl",
+            "username": "sender@example.com",
+            "password": "wrong-secret",
+            "from_address": "sender@example.com",
+        },
+    )
+
+    assert response.status_code == 502
+    assert preferences.get_email_smtp_config()["host"] == ""
+    assert secrets_store.get_email_smtp_password() == ""
+    assert not (app_config.settings.data_dir / "user_data" / "preferences.json").exists()
+    assert not (app_config.settings.data_dir / "user_data" / "secrets.json").exists()
+
+
+def test_registration_smtp_setup_is_desktop_only_and_closes_after_registration(
+    isolated_auth_store: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = isolated_auth_store
+    auth.set_registration_secret("test-registration-secret")
+    deliveries: list[dict] = []
+    monkeypatch.setattr(
+        email_adapter,
+        "send_email",
+        lambda config, *args, **kwargs: deliveries.append(config) or True,
+    )
+    app = FastAPI()
+    app.include_router(auth_api.router)
+    client = TestClient(app)
+    payload = {
+        "email": "user@example.com",
+        "registration_secret": "test-registration-secret",
+        "host": "smtp.example.com",
+        "port": 465,
+        "security": "ssl",
+        "username": "sender@example.com",
+        "password": "smtp-secret",
+        "from_address": "sender@example.com",
+    }
+
+    server_response = client.post("/api/auth/register/email/setup", json=payload)
+    assert server_response.status_code == 403
+
+    monkeypatch.setattr(app_config, "_IS_FROZEN", True)
+    wrong_secret = client.post(
+        "/api/auth/register/email/setup",
+        json={**payload, "registration_secret": "wrong-secret"},
+    )
+    assert wrong_secret.status_code == 403
+
+    auth.register_user("owner@example.com", "password-123")
+    registered_response = client.post("/api/auth/register/email/setup", json=payload)
+    assert registered_response.status_code == 409
+    assert deliveries == []
 
 
 def test_verification_code_is_hashed_and_consumed_once(

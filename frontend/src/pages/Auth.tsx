@@ -1,9 +1,22 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, KeyRound, Loader2, LockKeyhole, Mail, ShieldAlert, ShieldCheck, UserPlus } from 'lucide-react'
+import {
+  ChevronDown,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Loader2,
+  LockKeyhole,
+  Mail,
+  Send,
+  ServerCog,
+  ShieldAlert,
+  ShieldCheck,
+  UserPlus,
+} from 'lucide-react'
 import { Logo } from '@/components/Logo'
-import { api } from '@/lib/api'
+import { api, type AuthStatus } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { QK } from '@/lib/queryKeys'
 
@@ -22,6 +35,14 @@ export function Auth() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [localError, setLocalError] = useState('')
+  const [smtpExpanded, setSmtpExpanded] = useState(false)
+  const [smtpHost, setSmtpHost] = useState('')
+  const [smtpPort, setSmtpPort] = useState('465')
+  const [smtpSecurity, setSmtpSecurity] = useState<'ssl' | 'starttls' | 'none'>('ssl')
+  const [smtpUsername, setSmtpUsername] = useState('')
+  const [smtpPassword, setSmtpPassword] = useState('')
+  const [smtpFromAddress, setSmtpFromAddress] = useState('')
+  const [smtpMessage, setSmtpMessage] = useState('')
 
   const statusQuery = useQuery({
     queryKey: QK.authStatus,
@@ -45,6 +66,12 @@ export function Auth() {
   }, [navigate, searchParams, status])
 
   useEffect(() => {
+    if (status?.registration_email_configurable && !status.registration_email_configured) {
+      setSmtpExpanded(true)
+    }
+  }, [status?.registration_email_configurable, status?.registration_email_configured])
+
+  useEffect(() => {
     if (resendSeconds <= 0) return
     const timer = window.setTimeout(() => {
       setResendSeconds((seconds) => Math.max(0, seconds - 1))
@@ -60,6 +87,33 @@ export function Auth() {
       setLocalError('')
     },
     onError: (error: Error) => setLocalError(error.message || '验证码发送失败'),
+  })
+
+  const smtpSetupMutation = useMutation({
+    mutationFn: () => api.authSetupRegistrationEmail({
+      email: email.trim(),
+      registration_secret: registrationSecret,
+      host: smtpHost.trim(),
+      port: Number(smtpPort),
+      security: smtpSecurity,
+      username: smtpUsername.trim(),
+      password: smtpPassword,
+      from_address: smtpFromAddress.trim(),
+    }),
+    onSuccess: (result) => {
+      queryClient.setQueryData<AuthStatus>(QK.authStatus, current => (
+        current ? { ...current, registration_email_configured: true } : current
+      ))
+      void queryClient.invalidateQueries({ queryKey: QK.authStatus })
+      setSmtpPassword('')
+      setSmtpMessage(result.detail)
+      setLocalError('')
+      setSmtpExpanded(false)
+    },
+    onError: (error: Error) => {
+      setSmtpMessage('')
+      setLocalError(error.message || '邮件服务测试失败')
+    },
   })
 
   const submitMutation = useMutation({
@@ -82,7 +136,9 @@ export function Auth() {
     setRegistrationSecret('')
     setVerificationCode('')
     setLocalError('')
+    setSmtpMessage('')
     sendCodeMutation.reset()
+    smtpSetupMutation.reset()
     submitMutation.reset()
   }
 
@@ -91,7 +147,41 @@ export function Auth() {
     setVerificationCode('')
     setResendSeconds(0)
     setLocalError('')
+    setSmtpMessage('')
     sendCodeMutation.reset()
+  }
+
+  const handleSmtpSetup = () => {
+    setLocalError('')
+    setSmtpMessage('')
+    const normalizedEmail = email.trim()
+    const port = Number(smtpPort)
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      setLocalError('请输入接收测试邮件的有效邮箱')
+      return
+    }
+    if (!registrationSecret) {
+      setLocalError('请输入注册口令')
+      return
+    }
+    if (!smtpHost.trim()) {
+      setLocalError('请输入 SMTP 服务器')
+      return
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setLocalError('请输入有效的 SMTP 端口')
+      return
+    }
+    const sender = smtpFromAddress.trim() || smtpUsername.trim()
+    if (!sender || !sender.includes('@')) {
+      setLocalError('请输入有效的发件人邮箱')
+      return
+    }
+    if (smtpUsername.trim() && !smtpPassword) {
+      setLocalError('请输入 SMTP 密码或授权码')
+      return
+    }
+    smtpSetupMutation.mutate()
   }
 
   const handleSendCode = () => {
@@ -238,6 +328,128 @@ export function Auth() {
             </label>
           )}
 
+          {isRegister && status?.registration_email_configurable && (
+            <section className="border-y border-border py-3">
+              <button
+                type="button"
+                onClick={() => setSmtpExpanded(expanded => !expanded)}
+                className="flex w-full items-center gap-2 text-left"
+                aria-expanded={smtpExpanded}
+              >
+                <ServerCog className="h-4 w-4 text-muted" />
+                <span className="flex-1 text-xs font-medium text-secondary">邮件服务</span>
+                <span className={cn(
+                  'text-[11px]',
+                  status.registration_email_configured ? 'text-accent' : 'text-muted',
+                )}
+                >
+                  {status.registration_email_configured ? '已验证' : '待配置'}
+                </span>
+                <ChevronDown className={cn(
+                  'h-4 w-4 text-muted transition-transform',
+                  smtpExpanded && 'rotate-180',
+                )}
+                />
+              </button>
+
+              {smtpExpanded && (
+                <div className="mt-4 space-y-3">
+                  <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-2">
+                    <label className="block min-w-0">
+                      <span className="mb-1.5 block text-xs font-medium text-secondary">SMTP 服务器</span>
+                      <input
+                        type="text"
+                        value={smtpHost}
+                        onChange={event => setSmtpHost(event.target.value)}
+                        placeholder="smtp.example.com"
+                        autoComplete="off"
+                        className="h-10 w-full rounded-btn border border-border bg-surface px-3 text-sm text-foreground outline-none placeholder:text-muted/60 focus:border-accent/60"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-medium text-secondary">端口</span>
+                      <input
+                        type="number"
+                        value={smtpPort}
+                        onChange={event => setSmtpPort(event.target.value)}
+                        min={1}
+                        max={65535}
+                        className="h-10 w-full rounded-btn border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-accent/60"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-secondary">安全方式</span>
+                    <select
+                      value={smtpSecurity}
+                      onChange={event => setSmtpSecurity(event.target.value as 'ssl' | 'starttls' | 'none')}
+                      className="h-10 w-full rounded-btn border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent/60"
+                    >
+                      <option value="ssl">SSL</option>
+                      <option value="starttls">STARTTLS</option>
+                      <option value="none">无加密</option>
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-secondary">SMTP 登录名</span>
+                    <input
+                      type="text"
+                      value={smtpUsername}
+                      onChange={event => setSmtpUsername(event.target.value)}
+                      placeholder="sender@example.com"
+                      autoComplete="username"
+                      className="h-10 w-full rounded-btn border border-border bg-surface px-3 text-sm text-foreground outline-none placeholder:text-muted/60 focus:border-accent/60"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-secondary">SMTP 密码或授权码</span>
+                    <input
+                      type="password"
+                      value={smtpPassword}
+                      onChange={event => setSmtpPassword(event.target.value)}
+                      autoComplete="new-password"
+                      className="h-10 w-full rounded-btn border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent/60"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-medium text-secondary">发件人邮箱</span>
+                    <input
+                      type="email"
+                      value={smtpFromAddress}
+                      onChange={event => setSmtpFromAddress(event.target.value)}
+                      placeholder="默认使用 SMTP 登录名"
+                      autoComplete="email"
+                      className="h-10 w-full rounded-btn border border-border bg-surface px-3 text-sm text-foreground outline-none placeholder:text-muted/60 focus:border-accent/60"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={handleSmtpSetup}
+                    disabled={smtpSetupMutation.isPending}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-btn border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:border-accent/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {smtpSetupMutation.isPending
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Send className="h-4 w-4" />}
+                    {smtpSetupMutation.isPending ? '正在发送测试邮件…' : '保存并发送测试邮件'}
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+
+          {smtpMessage && (
+            <div className="flex items-start gap-2 rounded-btn border border-accent/25 bg-accent/10 px-3 py-2.5 text-xs text-accent">
+              <ShieldCheck className="mt-px h-3.5 w-3.5 shrink-0" />
+              <span>{smtpMessage}</span>
+            </div>
+          )}
+
           {isRegister && (
             <label className="block">
               <span className="mb-1.5 block text-xs font-medium text-secondary">邮箱验证码</span>
@@ -266,6 +478,10 @@ export function Auth() {
                     || resendSeconds > 0
                     || !email.trim()
                     || !registrationSecret
+                    || (
+                      status?.registration_email_configurable
+                      && !status.registration_email_configured
+                    )
                   }
                   className="inline-flex h-11 w-28 shrink-0 items-center justify-center rounded-btn border border-border bg-surface px-2 text-xs font-medium text-secondary transition-colors hover:border-accent/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >

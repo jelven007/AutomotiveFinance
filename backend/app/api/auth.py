@@ -5,6 +5,7 @@ import logging
 import time
 from collections import defaultdict
 from threading import Lock
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -169,6 +170,17 @@ class RegistrationCodeIn(BaseModel):
     registration_secret: str = Field(min_length=1, max_length=128)
 
 
+class RegistrationEmailSetupIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    registration_secret: str = Field(min_length=1, max_length=128)
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=465, ge=1, le=65535)
+    security: Literal["ssl", "starttls", "none"] = "ssl"
+    username: str = Field(default="", max_length=254)
+    password: str = Field(default="", max_length=1024)
+    from_address: str = Field(default="", max_length=254)
+
+
 class LegacyMigrationIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=6, max_length=128)
@@ -177,6 +189,16 @@ class LegacyMigrationIn(BaseModel):
 class ChangePasswordIn(BaseModel):
     old_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+def _registration_email_setup_available() -> bool:
+    from app.config import _IS_FROZEN
+
+    return bool(
+        _IS_FROZEN
+        and not auth.has_users()
+        and not auth.requires_legacy_migration()
+    )
 
 
 @router.get("/status")
@@ -190,8 +212,99 @@ def auth_status(request: Request) -> dict:
         "legacy_migration_required": auth.requires_legacy_migration(),
         "registration_enabled": auth.has_registration_secret(),
         "email_verification_required": True,
+        "registration_email_configurable": _registration_email_setup_available(),
+        "registration_email_configured": auth_verification.registration_email_configured(),
         "authenticated": authenticated,
         "user": auth.current_user(token) if authenticated and token else None,
+    }
+
+
+@router.post("/register/email/setup")
+def setup_registration_email(req: RegistrationEmailSetupIn, request: Request) -> dict:
+    """Test and persist SMTP for a fresh packaged desktop installation."""
+    from app import secrets_store
+    from app.config import _IS_FROZEN
+    from app.services import email_adapter, preferences
+
+    if not _IS_FROZEN:
+        raise HTTPException(status_code=403, detail="仅桌面版首次注册可配置邮件服务")
+    if auth.requires_legacy_migration():
+        raise HTTPException(status_code=409, detail="现有访问密码尚未绑定邮箱")
+    if auth.has_users():
+        raise HTTPException(status_code=409, detail="账户已创建, 请登录后在设置中修改邮件服务")
+    if not auth.has_registration_secret():
+        raise HTTPException(status_code=503, detail="注册口令尚未配置")
+    if not auth.verify_registration_secret(req.registration_secret):
+        raise HTTPException(status_code=403, detail="注册口令错误")
+
+    try:
+        normalized_email = auth.normalize_email(req.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    host = req.host.strip()
+    username = req.username.strip()
+    from_address = (req.from_address or username).strip()
+    if not host:
+        raise HTTPException(status_code=400, detail="请填写 SMTP 服务器")
+    if not from_address or not email_adapter.is_valid_email(from_address):
+        raise HTTPException(status_code=400, detail="请填写有效的发件人邮箱")
+    if username and not req.password:
+        raise HTTPException(status_code=400, detail="请填写 SMTP 密码或授权码")
+
+    _record_registration_attempt(_client_ip(request))
+    config = {
+        "host": host,
+        "port": req.port,
+        "security": req.security,
+        "username": username,
+        "from_address": from_address,
+        "to_addresses": [normalized_email],
+    }
+    sent = email_adapter.send_email(
+        config,
+        req.password if username else "",
+        "TSP 邮件服务配置测试",
+        (
+            "这是一封 TSP 桌面版邮件服务测试邮件。\n\n"
+            "收到此邮件表示 SMTP 配置与真实投递链路均已通过校验。"
+        ),
+        max_attempts=1,
+    )
+    if not sent:
+        raise HTTPException(
+            status_code=502,
+            detail="测试邮件发送失败, 请检查服务器、端口、安全方式和授权码",
+        )
+    if auth.has_users():
+        raise HTTPException(status_code=409, detail="账户已创建, 邮件配置未保存")
+
+    previous_config = preferences.get_email_smtp_config()
+    previous_password = secrets_store.get_email_smtp_password()
+    try:
+        secrets_store.set_email_smtp_password(req.password if username else "")
+        saved_config = preferences.set_email_smtp_config(config)
+    except Exception as exc:
+        logger.exception("registration SMTP persistence failed")
+        try:
+            secrets_store.set_email_smtp_password(previous_password)
+            preferences.set_email_smtp_config(previous_config)
+        except Exception:
+            logger.exception("registration SMTP rollback failed")
+        raise HTTPException(status_code=500, detail="邮件测试成功, 但配置保存失败") from exc
+
+    logger.info("desktop registration SMTP verified and saved from %s", _client_ip(request))
+    return {
+        "ok": True,
+        "registration_email_configured": True,
+        "detail": "测试邮件已发送, 邮件服务配置已保存",
+        "smtp": {
+            "host": saved_config["host"],
+            "port": saved_config["port"],
+            "security": saved_config["security"],
+            "username": saved_config["username"],
+            "from_address": saved_config["from_address"],
+        },
     }
 
 

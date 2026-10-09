@@ -34,6 +34,11 @@ _BASE_PORT = 3018
 _PORT_PROBE_RANGE = 50  # 从 3018 起最多试 50 个端口
 _SMOKE_TEST_ENV = "TSP_DESKTOP_SMOKE_TEST"
 _GUI_SMOKE_TEST_ENV = "TSP_DESKTOP_GUI_SMOKE_TEST"
+_SMTP_SMOKE_TEST_ENV = "TSP_DESKTOP_SMTP_SMOKE_TEST"
+_SMTP_SMOKE_HOST_ENV = "TSP_DESKTOP_SMTP_SMOKE_HOST"
+_SMTP_SMOKE_PORT_ENV = "TSP_DESKTOP_SMTP_SMOKE_PORT"
+_SMTP_SMOKE_EMAIL_ENV = "TSP_DESKTOP_SMTP_SMOKE_EMAIL"
+_SMTP_SMOKE_SECRET_ENV = "TSP_DESKTOP_SMTP_SMOKE_REGISTRATION_SECRET"
 _GUI_SMOKE_TIMEOUT_SECONDS = 90.0
 _GUI_SMOKE_RENDER_TIMEOUT_SECONDS = 30.0
 _GUI_SMOKE_POLL_INTERVAL_SECONDS = 0.5
@@ -376,6 +381,64 @@ def _validate_smoke_plugins(plugins: list[dict]) -> None:
         )
 
 
+def _post_json(url: str, payload: dict) -> dict:
+    import urllib.request
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        body = json.loads(response.read())
+        if response.status >= 300 or not isinstance(body, dict):
+            raise RuntimeError(f"request failed: status={response.status}, body={body}")
+        return body
+
+
+def _run_smtp_smoke_checks(base_url: str) -> None:
+    """Exercise SMTP setup and registration delivery through the installed API."""
+    host = os.getenv(_SMTP_SMOKE_HOST_ENV, "").strip()
+    port_text = os.getenv(_SMTP_SMOKE_PORT_ENV, "").strip()
+    email = os.getenv(_SMTP_SMOKE_EMAIL_ENV, "").strip()
+    registration_secret = os.getenv(_SMTP_SMOKE_SECRET_ENV, "")
+    if not host or not port_text or not email or not registration_secret:
+        raise RuntimeError("desktop SMTP smoke environment is incomplete")
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise RuntimeError("desktop SMTP smoke port is invalid") from exc
+
+    setup = _post_json(
+        f"{base_url}/api/auth/register/email/setup",
+        {
+            "email": email,
+            "registration_secret": registration_secret,
+            "host": host,
+            "port": port,
+            "security": "none",
+            "username": "",
+            "password": "",
+            "from_address": "tsp-smoke@example.com",
+        },
+    )
+    if not setup.get("ok") or not setup.get("registration_email_configured"):
+        raise RuntimeError(f"desktop SMTP setup failed: {setup}")
+
+    sent = _post_json(
+        f"{base_url}/api/auth/register/code",
+        {
+            "email": email,
+            "registration_secret": registration_secret,
+        },
+    )
+    if not sent.get("ok") or int(sent.get("cooldown_seconds", 0)) <= 0:
+        raise RuntimeError(f"desktop registration email failed: {sent}")
+
+    logger.info("DESKTOP_SMTP_SMOKE_TEST_OK")
+
+
 def _run_smoke_checks(port: int) -> None:
     """在不打开 GUI 的情况下验证冻结产物的关键运行时链路。"""
     import urllib.request
@@ -395,7 +458,12 @@ def _run_smoke_checks(port: int) -> None:
     with urllib.request.urlopen(f"{base_url}/openapi.json", timeout=15) as response:
         schema = json.loads(response.read())
         paths = schema.get("paths") or {}
-        required_paths = {"/api/auth/status", "/api/backtest/run", "/api/capabilities"}
+        required_paths = {
+            "/api/auth/status",
+            "/api/auth/register/email/setup",
+            "/api/backtest/run",
+            "/api/capabilities",
+        }
         missing = sorted(required_paths - set(paths))
         if response.status != 200 or missing:
             raise RuntimeError(
@@ -409,6 +477,9 @@ def _run_smoke_checks(port: int) -> None:
                 "desktop registration bootstrap failed: "
                 f"status={response.status}, body={auth_status}"
             )
+
+    if os.getenv(_SMTP_SMOKE_TEST_ENV, "").strip() == "1":
+        _run_smtp_smoke_checks(base_url)
 
     from app.data_providers import custom as custom_sources
 

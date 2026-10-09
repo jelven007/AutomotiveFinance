@@ -59,6 +59,9 @@ def test_desktop_smoke_requires_registration_bootstrap() -> None:
 
     assert 'f"{base_url}/api/auth/status"' in source
     assert 'auth_status.get("registration_enabled")' in source
+    assert 'f"{base_url}/api/auth/register/email/setup"' in source
+    assert 'f"{base_url}/api/auth/register/code"' in source
+    assert 'logger.info("DESKTOP_SMTP_SMOKE_TEST_OK")' in source
 
 
 def test_find_free_port_skips_an_active_listener() -> None:
@@ -238,6 +241,11 @@ def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
         "Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
     ) == 1
     assert "$env:TSP_DESKTOP_GUI_SMOKE_TEST = '1'" in workflow
+    assert "$env:TSP_DESKTOP_SMTP_SMOKE_TEST = '1'" in workflow
+    assert "'aiosmtpd'" in workflow
+    assert "'packaging/smtp_sink.py'" in workflow
+    assert "'DESKTOP_SMTP_SMOKE_TEST_OK'" in workflow
+    assert "'Tick Stock Panel 注册验证码'" in workflow
     assert (
         "Select-String -Path $desktopLog -Pattern "
         "'DESKTOP_GUI_SMOKE_TEST_OK renderer=edgechromium' -Quiet"

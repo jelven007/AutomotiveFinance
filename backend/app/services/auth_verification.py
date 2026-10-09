@@ -157,6 +157,24 @@ def _registration_smtp(email: str) -> tuple[dict, str]:
     return config, secrets_store.get_email_smtp_password()
 
 
+def registration_email_configured() -> bool:
+    """Return whether registration has a complete SMTP configuration."""
+    config, password = _registration_smtp("registration-check@example.com")
+    sender = str(config.get("from_address") or config.get("username") or "").strip()
+    username = str(config.get("username") or "").strip()
+    try:
+        port = int(config.get("port", 465))
+    except (TypeError, ValueError):
+        return False
+    return (
+        email_adapter.is_configured(config)
+        and email_adapter.is_valid_email(sender)
+        and 1 <= port <= 65535
+        and str(config.get("security") or "ssl") in email_adapter.SECURITY_MODES
+        and (not username or bool(password))
+    )
+
+
 def send_registration_code(email: str) -> int:
     """Issue and send a registration code, returning the resend cooldown."""
     normalized = auth.normalize_email(email)
