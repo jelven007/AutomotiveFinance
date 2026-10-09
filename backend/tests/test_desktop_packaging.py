@@ -32,7 +32,7 @@ class _FakeWindow:
     def evaluate_js(self, _script: str) -> dict:
         return {
             "readyState": "complete",
-            "location": "http://127.0.0.1:3018/login",
+            "location": "http://127.0.0.1:3018/",
             "title": "TSP",
             "bodyTextLength": 42,
             "htmlLength": 512,
@@ -54,14 +54,14 @@ def test_smoke_plugin_validation_accepts_complete_mootdx() -> None:
     )
 
 
-def test_desktop_smoke_requires_registration_bootstrap() -> None:
+def test_desktop_smoke_requires_authentication_bypass() -> None:
     source = (ROOT / "backend" / "app" / "desktop.py").read_text(encoding="utf-8")
 
     assert 'f"{base_url}/api/auth/status"' in source
-    assert 'auth_status.get("registration_enabled")' in source
-    assert 'f"{base_url}/api/auth/register/email/setup"' in source
-    assert 'f"{base_url}/api/auth/register/code"' in source
-    assert 'logger.info("DESKTOP_SMTP_SMOKE_TEST_OK")' in source
+    assert 'auth_status.get("auth_required") is not False' in source
+    assert 'f"{base_url}/api/capabilities"' in source
+    assert 'f"{base_url}/api/auth/login"' in source
+    assert 'logger.info("DESKTOP_AUTH_BYPASS_SMOKE_TEST_OK")' in source
 
 
 def test_find_free_port_skips_an_active_listener() -> None:
@@ -241,11 +241,10 @@ def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
         "Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
     ) == 1
     assert "$env:TSP_DESKTOP_GUI_SMOKE_TEST = '1'" in workflow
-    assert "$env:TSP_DESKTOP_SMTP_SMOKE_TEST = '1'" in workflow
-    assert "'aiosmtpd'" in workflow
-    assert "'packaging/smtp_sink.py'" in workflow
-    assert "'DESKTOP_SMTP_SMOKE_TEST_OK'" in workflow
-    assert "'Tick Stock Panel 注册验证码'" in workflow
+    assert "DESKTOP_AUTH_BYPASS_SMOKE_TEST_OK" in workflow
+    assert "matrix.platform == 'macos' || matrix.platform == 'linux'" in workflow
+    assert "packaging/smtp_sink.py" not in workflow
+    assert "TSP_DESKTOP_SMTP_SMOKE_TEST" not in workflow
     assert (
         "Select-String -Path $desktopLog -Pattern "
         "'DESKTOP_GUI_SMOKE_TEST_OK renderer=edgechromium' -Quiet"

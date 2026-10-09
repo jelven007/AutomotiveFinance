@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api, type AuthStatus } from '@/lib/api'
@@ -21,17 +21,16 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 
-describe('desktop registration email setup', () => {
-  it('shows SMTP fields and blocks verification until delivery is tested', async () => {
+describe('desktop authentication bypass', () => {
+  it('redirects the login route directly to the application', async () => {
     const status: AuthStatus = {
+      auth_required: false,
       configured: false,
       has_users: false,
       legacy_migration_required: false,
-      registration_enabled: true,
-      email_verification_required: true,
-      registration_email_configurable: true,
-      registration_email_configured: false,
-      authenticated: false,
+      registration_enabled: false,
+      email_verification_required: false,
+      authenticated: true,
       user: null,
     }
     vi.spyOn(api, 'authStatus').mockResolvedValue(status)
@@ -47,7 +46,10 @@ describe('desktop registration email setup', () => {
       root?.render(
         <MemoryRouter initialEntries={['/login']}>
           <QueryClientProvider client={queryClient}>
-            <Auth />
+            <Routes>
+              <Route path="/login" element={<Auth />} />
+              <Route path="/" element={<div>业务页面</div>} />
+            </Routes>
           </QueryClientProvider>
         </MemoryRouter>,
       )
@@ -56,11 +58,8 @@ describe('desktop registration email setup', () => {
       await new Promise(resolve => window.setTimeout(resolve, 0))
     })
 
-    expect(document.body.textContent).toContain('SMTP 服务器')
-    expect(document.body.textContent).toContain('保存并发送测试邮件')
-    const sendCode = Array.from(document.querySelectorAll('button'))
-      .find(button => button.textContent?.includes('发送验证码'))
-    expect(sendCode).toBeDefined()
-    expect(sendCode?.disabled).toBe(true)
+    expect(document.body.textContent).toContain('业务页面')
+    expect(document.body.textContent).not.toContain('创建账户')
+    expect(document.body.textContent).not.toContain('登录后继续')
   })
 })

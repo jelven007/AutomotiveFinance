@@ -5,6 +5,7 @@
  */
 import { Suspense, lazy, useState, type ComponentType } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { BarChart3, Database, KeyRound, Radio, SlidersHorizontal, Sparkles, Settings2, PanelLeftClose, PanelLeftOpen, Clock3, UserRound } from 'lucide-react'
 // 面板按 tab 按需加载, 避免设置页同步打包全部面板。
@@ -18,7 +19,9 @@ const SettingsTimeoutPanel = lazy(() => import('./settings/Timeout').then(m => (
 const SettingsSystemPanel = lazy(() => import('./settings/System').then(m => ({ default: m.SettingsSystemPanel })))
 const SettingsDataSourcesPanel = lazy(() => import('./settings/DataSources').then(m => ({ default: m.SettingsDataSourcesPanel })))
 import { PageHeader } from '@/components/PageHeader'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { QK } from '@/lib/queryKeys'
 
 // ===== Tab 定义 =====
 
@@ -46,8 +49,16 @@ type TabKey = (typeof TABS)[number]['key']
 
 export function Settings() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const { data: authStatus } = useQuery({
+    queryKey: QK.authStatus,
+    queryFn: api.authStatus,
+    staleTime: 30_000,
+  })
   const tabParam = searchParams.get('tab') as TabKey | null
-  const activeTab = TABS.find((t) => t.key === tabParam) ?? TABS[0]
+  const availableTabs = authStatus?.auth_required
+    ? TABS
+    : TABS.filter(tab => tab.key !== 'account')
+  const activeTab = availableTabs.find((t) => t.key === tabParam) ?? availableTabs[0]
   const highlight = searchParams.get('highlight') ?? ''
 
   // 设置菜单收起状态 — 持久化到 localStorage
@@ -66,7 +77,7 @@ export function Settings() {
     <>
       <PageHeader
         title="设置"
-        subtitle="管理账户、数据刷新策略和高级功能配置。"
+        subtitle="管理数据刷新策略和高级功能配置。"
       />
 
       <div className="px-8 py-6">
@@ -91,7 +102,7 @@ export function Settings() {
               </button>
 
               {/* Tab 按钮列表 — 收起时只显示图标 */}
-              {TABS.map(({ key, label, icon: Icon, badge }) => (
+              {availableTabs.map(({ key, label, icon: Icon, badge }) => (
                 <button
                   key={key}
                   onClick={() => setSearchParams({ tab: key }, { replace: true })}

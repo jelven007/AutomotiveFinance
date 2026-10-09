@@ -1021,35 +1021,37 @@ export function Layout() {
         )}
 
         <div className={cn('border-t border-border py-3 shrink-0', railMode ? 'px-2 flex flex-col items-center gap-1' : 'px-2')}>
-          <div className={cn('mb-1 flex items-center', railMode ? 'flex-col gap-1' : 'gap-1')}>
-            <NavLink
-              to="/settings?tab=account"
-              title={railMode ? authStatus?.user?.email || '账户' : undefined}
-              className={cn(
-                'group flex min-w-0 items-center rounded-btn text-foreground/75 transition-colors hover:bg-elevated/70 hover:text-foreground',
-                railMode ? 'justify-center p-2' : 'flex-1 gap-2.5 px-3 py-2',
-              )}
-            >
-              <UserRound className="h-4 w-4 shrink-0 text-foreground/60 group-hover:text-foreground/85" />
-              {!railMode && (
-                <span className="min-w-0 flex-1 truncate text-xs">
-                  {authStatus?.user?.email || '账户'}
-                </span>
-              )}
-            </NavLink>
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              disabled={loggingOut}
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-btn text-muted transition-colors hover:bg-elevated hover:text-foreground disabled:opacity-50"
-              title="退出登录"
-              aria-label="退出登录"
-            >
-              {loggingOut
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <LogOut className="h-3.5 w-3.5" />}
-            </button>
-          </div>
+          {authStatus?.auth_required && (
+            <div className={cn('mb-1 flex items-center', railMode ? 'flex-col gap-1' : 'gap-1')}>
+              <NavLink
+                to="/settings?tab=account"
+                title={railMode ? authStatus.user?.email || '账户' : undefined}
+                className={cn(
+                  'group flex min-w-0 items-center rounded-btn text-foreground/75 transition-colors hover:bg-elevated/70 hover:text-foreground',
+                  railMode ? 'justify-center p-2' : 'flex-1 gap-2.5 px-3 py-2',
+                )}
+              >
+                <UserRound className="h-4 w-4 shrink-0 text-foreground/60 group-hover:text-foreground/85" />
+                {!railMode && (
+                  <span className="min-w-0 flex-1 truncate text-xs">
+                    {authStatus.user?.email || '账户'}
+                  </span>
+                )}
+              </NavLink>
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                disabled={loggingOut}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-btn text-muted transition-colors hover:bg-elevated hover:text-foreground disabled:opacity-50"
+                title="退出登录"
+                aria-label="退出登录"
+              >
+                {loggingOut
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <LogOut className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          )}
           <div className={railMode ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1'}>
             <ThemeToggle />
             <NavLink

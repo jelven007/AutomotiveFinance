@@ -31,39 +31,12 @@ describe('auth API', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await api.authSetupRegistrationEmail({
-      email: 'user@example.com',
-      registration_secret: 'test-registration-secret',
-      host: 'smtp.example.com',
-      port: 465,
-      security: 'ssl',
-      username: 'sender@example.com',
-      password: 'smtp-secret',
-      from_address: 'sender@example.com',
-    })
     await api.authSendRegistrationCode('user@example.com', 'test-registration-secret')
     await api.authRegister('user@example.com', 'password-123', '123456')
     await api.authLogin('user@example.com', 'password-123')
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/api/auth/register/email/setup',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          email: 'user@example.com',
-          registration_secret: 'test-registration-secret',
-          host: 'smtp.example.com',
-          port: 465,
-          security: 'ssl',
-          username: 'sender@example.com',
-          password: 'smtp-secret',
-          from_address: 'sender@example.com',
-        }),
-      }),
-    )
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
       '/api/auth/register/code',
       expect.objectContaining({
         method: 'POST',
@@ -74,7 +47,7 @@ describe('auth API', () => {
       }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      2,
       '/api/auth/register',
       expect.objectContaining({
         method: 'POST',
@@ -86,7 +59,7 @@ describe('auth API', () => {
       }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
-      4,
+      3,
       '/api/auth/login',
       expect.objectContaining({
         method: 'POST',

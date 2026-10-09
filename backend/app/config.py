@@ -17,6 +17,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _IS_FROZEN = getattr(sys, "frozen", False)
 
 
+def authentication_required() -> bool:
+    """Only server deployments use account authentication."""
+    return not _IS_FROZEN
+
+
 def _user_data_root() -> Path:
     """桌面版用户数据根目录。
 

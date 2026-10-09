@@ -18,7 +18,7 @@ on:
       version:
         description: '版本号 (如 v0.1.33, 用作 Release tag 和标题; 必须与 frontend/package.json 的 version 一致, 否则流水线直接失败)'
         required: true
-        default: 'v0.3.10'
+        default: 'v0.3.11'
       platforms:
         description: '要构建的平台 (逗号分隔: windows,macos,linux)'
         required: true
@@ -66,10 +66,10 @@ jobs:
           import json, sys
           requested = '${{ github.event.inputs.platforms }}'.split(',')
           requested = [r.strip() for r in requested if r.strip()]
-          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.10 → 0.3.10
+          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.11 → 0.3.11
           all_platforms = json.loads('''$ALL''')
           selected = [p for p in all_platforms if p['platform'] in requested]
-          # 产物文件名带版本号 (TSP-Setup-x64-0.3.10.exe): 用户下载后一眼可辨版本
+          # 产物文件名带版本号 (TSP-Setup-x64-0.3.11.exe): 用户下载后一眼可辨版本
           for p in selected:
               stem, _, ext = p['artifact'].rpartition('.')
               p['artifact'] = f'{stem}-{ver}.{ext}'
@@ -291,6 +291,9 @@ jobs:
             if (-not (Test-Path $log) -or -not (Select-String -Path $log -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
               throw 'Portable smoke success marker is missing from desktop.log'
             }
+            if (-not (Select-String -Path $log -Pattern 'DESKTOP_AUTH_BYPASS_SMOKE_TEST_OK' -Quiet)) {
+              throw 'Portable authentication-bypass marker is missing from desktop.log'
+            }
           }
           finally {
             Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
@@ -299,6 +302,25 @@ jobs:
             }
             Remove-Item $dataDir -Recurse -Force -ErrorAction SilentlyContinue
           }
+
+      - name: 验证 macOS 和 Linux 本地版无需登录
+        if: matrix.platform == 'macos' || matrix.platform == 'linux'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            exe="backend/dist/TSP.app/Contents/MacOS/TSP"
+          else
+            exe="backend/dist/TSP/TSP"
+          fi
+          data_dir="$(dirname "$exe")/data"
+          rm -rf "$data_dir"
+          TSP_DESKTOP_SMOKE_TEST=1 "$exe"
+          log="$data_dir/desktop.log"
+          test -f "$log"
+          grep -q 'DESKTOP_SMOKE_TEST_OK' "$log"
+          grep -q 'DESKTOP_AUTH_BYPASS_SMOKE_TEST_OK' "$log"
+          rm -rf "$data_dir"
 
       - name: 静默安装、运行和卸载 Windows 安装包
         if: matrix.platform == 'windows'
@@ -310,41 +332,8 @@ jobs:
           $installLog = Join-Path $artifactDir 'installer.log'
           $uninstallLog = Join-Path $artifactDir 'uninstaller.log'
           $installer = (Resolve-Path '${{ matrix.artifact }}').Path
-          $smtpPort = 25252
-          $smtpMessages = Join-Path $artifactDir 'smtp-messages.jsonl'
-          $smtpReady = Join-Path $artifactDir 'smtp-ready.txt'
-          $smtpStdout = Join-Path $artifactDir 'smtp-sink.stdout.log'
-          $smtpStderr = Join-Path $artifactDir 'smtp-sink.stderr.log'
-          $smtpSink = $null
           Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
           try {
-            $smtpSink = Start-Process -FilePath (Get-Command uv).Source -ArgumentList @(
-              'run',
-              '--no-project',
-              '--with',
-              'aiosmtpd',
-              'python',
-              'packaging/smtp_sink.py',
-              '--host',
-              '127.0.0.1',
-              '--port',
-              "$smtpPort",
-              '--output',
-              $smtpMessages,
-              '--ready-file',
-              $smtpReady
-            ) -RedirectStandardOutput $smtpStdout -RedirectStandardError $smtpStderr -PassThru
-            $smtpDeadline = (Get-Date).AddSeconds(60)
-            while (-not (Test-Path $smtpReady) -and (Get-Date) -lt $smtpDeadline) {
-              if ($smtpSink.HasExited) {
-                throw "SMTP sink exited before ready with code $($smtpSink.ExitCode)"
-              }
-              Start-Sleep -Milliseconds 250
-            }
-            if (-not (Test-Path $smtpReady)) {
-              throw 'SMTP sink did not become ready within 60 seconds'
-            }
-
             $install = Start-Process -FilePath $installer -ArgumentList @(
               '/VERYSILENT',
               '/SUPPRESSMSGBOXES',
@@ -364,11 +353,6 @@ jobs:
             # _open_window，确认 EdgeChromium 已加载且 DOM 非空后自动关窗。
             $env:TSP_DESKTOP_SMOKE_TEST = '1'
             $env:TSP_DESKTOP_GUI_SMOKE_TEST = '1'
-            $env:TSP_DESKTOP_SMTP_SMOKE_TEST = '1'
-            $env:TSP_DESKTOP_SMTP_SMOKE_HOST = '127.0.0.1'
-            $env:TSP_DESKTOP_SMTP_SMOKE_PORT = "$smtpPort"
-            $env:TSP_DESKTOP_SMTP_SMOKE_EMAIL = 'desktop-smoke@example.com'
-            $env:TSP_DESKTOP_SMTP_SMOKE_REGISTRATION_SECRET = '天王盖地虎'
             $app = Start-Process -FilePath $exe -PassThru
             if (-not $app.WaitForExit(240000)) {
               Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
@@ -386,32 +370,8 @@ jobs:
             if (-not (Select-String -Path $desktopLog -Pattern 'DESKTOP_GUI_SMOKE_TEST_OK renderer=edgechromium' -Quiet)) {
               throw 'Installed GUI smoke success marker is missing from desktop.log'
             }
-            if (-not (Select-String -Path $desktopLog -Pattern 'DESKTOP_SMTP_SMOKE_TEST_OK' -Quiet)) {
-              throw 'Installed SMTP smoke success marker is missing from desktop.log'
-            }
-            $messageDeadline = (Get-Date).AddSeconds(10)
-            do {
-              $smtpRecords = @(
-                if (Test-Path $smtpMessages) {
-                  Get-Content $smtpMessages | Where-Object { $_ } | ForEach-Object {
-                    $_ | ConvertFrom-Json
-                  }
-                }
-              )
-              if ($smtpRecords.Count -ge 2) {
-                break
-              }
-              Start-Sleep -Milliseconds 250
-            } while ((Get-Date) -lt $messageDeadline)
-            if ($smtpRecords.Count -lt 2) {
-              throw "Installed SMTP smoke expected two messages, got $($smtpRecords.Count)"
-            }
-            $smtpSubjects = @($smtpRecords | ForEach-Object { $_.subject })
-            if (
-              $smtpSubjects -notcontains 'TSP 邮件服务配置测试' -or
-              $smtpSubjects -notcontains 'Tick Stock Panel 注册验证码'
-            ) {
-              throw "Installed SMTP smoke subjects are incomplete: $($smtpSubjects -join ', ')"
+            if (-not (Select-String -Path $desktopLog -Pattern 'DESKTOP_AUTH_BYPASS_SMOKE_TEST_OK' -Quiet)) {
+              throw 'Installed authentication-bypass marker is missing from desktop.log'
             }
             Copy-Item $desktopLog (Join-Path $artifactDir 'installed-desktop.log') -Force
             $marker = Join-Path $dataDir 'ci-uninstall-preserve.txt'
@@ -423,11 +383,6 @@ jobs:
             }
             Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
             Remove-Item Env:TSP_DESKTOP_GUI_SMOKE_TEST -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_TEST -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_HOST -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_PORT -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_EMAIL -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_REGISTRATION_SECRET -ErrorAction SilentlyContinue
             $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @(
               '/VERYSILENT',
               '/SUPPRESSMSGBOXES',
@@ -447,15 +402,6 @@ jobs:
           finally {
             Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
             Remove-Item Env:TSP_DESKTOP_GUI_SMOKE_TEST -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_TEST -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_HOST -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_PORT -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_EMAIL -ErrorAction SilentlyContinue
-            Remove-Item Env:TSP_DESKTOP_SMTP_SMOKE_REGISTRATION_SECRET -ErrorAction SilentlyContinue
-            if ($smtpSink -and -not $smtpSink.HasExited) {
-              Stop-Process -Id $smtpSink.Id -Force -ErrorAction SilentlyContinue
-              $smtpSink.WaitForExit(10000) | Out-Null
-            }
             $remainingLog = Join-Path $installDir 'data/desktop.log'
             if ((Test-Path $remainingLog) -and -not (Test-Path (Join-Path $artifactDir 'installed-desktop.log'))) {
               Copy-Item $remainingLog (Join-Path $artifactDir 'installed-desktop.log') -Force

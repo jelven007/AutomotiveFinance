@@ -2167,26 +2167,14 @@ export interface AuthUser {
 }
 
 export interface AuthStatus {
+  auth_required: boolean
   configured: boolean
   has_users: boolean
   legacy_migration_required: boolean
   registration_enabled: boolean
   email_verification_required: boolean
-  registration_email_configurable: boolean
-  registration_email_configured: boolean
   authenticated: boolean
   user: AuthUser | null
-}
-
-export interface RegistrationEmailSetup {
-  email: string
-  registration_secret: string
-  host: string
-  port: number
-  security: 'ssl' | 'starttls' | 'none'
-  username: string
-  password: string
-  from_address: string
 }
 
 export interface AuthResult {
@@ -2207,15 +2195,6 @@ export const api = {
     request<{ ok: boolean; cooldown_seconds: number }>('/api/auth/register/code', {
       method: 'POST',
       body: JSON.stringify({ email, registration_secret: registrationSecret }),
-    }),
-  authSetupRegistrationEmail: (config: RegistrationEmailSetup) =>
-    request<{
-      ok: boolean
-      registration_email_configured: boolean
-      detail: string
-    }>('/api/auth/register/email/setup', {
-      method: 'POST',
-      body: JSON.stringify(config),
     }),
   authRegister: (email: string, password: string, code: string) =>
     request<AuthResult>('/api/auth/register', {

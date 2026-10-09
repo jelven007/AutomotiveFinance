@@ -44,7 +44,7 @@ from app.api import (
 from app.api import auth as auth_api
 from app.api import settings as settings_api
 from app.api.routes import router as core_router
-from app.config import settings
+from app.config import authentication_required, settings
 from app.enriched_generation import EnrichedGenerationUnavailableError
 from app.extensions.loader import (
     configure_backend_extensions,
@@ -104,16 +104,15 @@ async def _application_lifespan(app: FastAPI):
         __version__, tf_client.current_mode(),
     )
 
-    # 首次启动可通过环境变量预置注册口令哈希与邮箱账户。冻结桌面版没有
-    # 部署 .env, 在环境变量未配置时使用打包的单向哈希初始化默认注册口令。
-    # 仅配置旧 AUTH_PASSWORD 时进入待绑定邮箱的兼容模式。
-    try:
-        from app.services import auth as auth_service
-        auth_service.bootstrap_registration_secret_from_env()
-        auth_service.bootstrap_registration_secret_for_desktop()
-        auth_service.bootstrap_from_env()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("auth bootstrap failed: %s", e)
+    # 账户认证只属于服务端部署。Windows/macOS/Linux 冻结桌面版不创建
+    # 账户、注册口令或会话, 安装后直接进入业务页面。
+    if authentication_required():
+        try:
+            from app.services import auth as auth_service
+            auth_service.bootstrap_registration_secret_from_env()
+            auth_service.bootstrap_from_env()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("auth bootstrap failed: %s", e)
 
     # 数据层
     store = DataStore()
@@ -488,6 +487,18 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     # CORS 预检不带凭据, 直接放行 (CORSMiddleware 在外层应答)
     if request.method == "OPTIONS":
+        return await call_next(request)
+    # 冻结桌面版只监听 127.0.0.1, 不启用账户体系。状态端点供前端识别
+    # 本地模式; 其余认证写接口关闭, 业务 API 则直接放行。
+    if not authentication_required():
+        if path.startswith(_AUTH_WHITELIST_PREFIX) and path != "/api/auth/status":
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": "桌面版不启用账户认证",
+                    "code": "AUTH_DISABLED",
+                },
+            )
         return await call_next(request)
     # 白名单放行(设密码/登录/探活本身不拦)
     if path.startswith(_AUTH_WHITELIST_PREFIX) or path in _AUTH_WHITELIST_EXACT:
