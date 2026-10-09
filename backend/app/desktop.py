@@ -32,6 +32,8 @@ _APP_NAME = "TSP"
 _BASE_PORT = 3018
 _PORT_PROBE_RANGE = 50  # 从 3018 起最多试 50 个端口
 _SMOKE_TEST_ENV = "TSP_DESKTOP_SMOKE_TEST"
+_GUI_SMOKE_TEST_ENV = "TSP_DESKTOP_GUI_SMOKE_TEST"
+_GUI_SMOKE_TIMEOUT_SECONDS = 90.0
 _MOOTDX_DATASETS = {
     "realtime",
     "daily",
@@ -44,6 +46,18 @@ _MOOTDX_DATASETS = {
 
 
 # #region debug-point A-E:reporter
+def _safe_distribution_version(name: str) -> str:
+    """Read optional package metadata without affecting application startup."""
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "metadata-missing"
+    except Exception as exc:
+        return f"metadata-error:{type(exc).__name__}"
+
+
 def _report_debug_event(
     hypothesis_id: str,
     location: str,
@@ -395,11 +409,32 @@ def _stop_server(server_ref: dict[str, Any], server_thread: threading.Thread) ->
         logger.warning("uvicorn 未在 15 秒内退出, 进程将强制结束")
 
 
+def _validate_gui_smoke_page(renderer: str, page: object) -> None:
+    """Validate that the Windows webview rendered a non-empty application DOM."""
+    if renderer.lower() != "edgechromium":
+        raise RuntimeError(f"unexpected pywebview renderer: {renderer or 'missing'}")
+    if not isinstance(page, dict):
+        raise RuntimeError(f"webview DOM probe returned {type(page).__name__}")
+
+    ready_state = str(page.get("readyState") or "")
+    if ready_state not in {"interactive", "complete"}:
+        raise RuntimeError(f"webview DOM is not ready: {ready_state or 'missing'}")
+
+    location = str(page.get("location") or "")
+    if not location.startswith("http://127.0.0.1:"):
+        raise RuntimeError(f"webview loaded an unexpected URL: {location or 'missing'}")
+
+    html_length = page.get("htmlLength")
+    body_text_length = page.get("bodyTextLength")
+    if not isinstance(html_length, int) or html_length <= 0:
+        raise RuntimeError(f"webview HTML is empty: {html_length!r}")
+    if not isinstance(body_text_length, int) or body_text_length <= 0:
+        raise RuntimeError(f"webview body text is empty: {body_text_length!r}")
+
+
 def _open_window(url: str) -> None:
     """主线程: 用 pywebview 打开桌面窗口。"""
     # #region debug-point A-B:runtime-and-backend
-    import importlib.metadata
-    import importlib.util
     import platform
 
     runtime_versions: dict[str, str] = {}
@@ -434,16 +469,8 @@ def _open_window(url: str) -> None:
             "frozen": bool(getattr(sys, "frozen", False)),
             "webview2_registry": runtime_versions,
             "packages": {
-                name: (
-                    importlib.metadata.version(name)
-                    if importlib.util.find_spec(module) is not None
-                    else "missing"
-                )
-                for name, module in (
-                    ("pywebview", "webview"),
-                    ("pythonnet", "pythonnet"),
-                    ("clr-loader", "clr_loader"),
-                )
+                name: _safe_distribution_version(name)
+                for name in ("pywebview", "pythonnet", "clr-loader")
             },
         },
     )
@@ -472,6 +499,10 @@ def _open_window(url: str) -> None:
         confirm_close=False,
     )
 
+    gui_smoke_test = os.getenv(_GUI_SMOKE_TEST_ENV, "").strip() == "1"
+    gui_smoke_done = threading.Event()
+    gui_smoke_state: dict[str, Any] = {"completed": False, "error": None}
+
     # #region debug-point C-E:window-lifecycle
     _report_debug_event(
         "C,E",
@@ -494,8 +525,28 @@ def _open_window(url: str) -> None:
             "C,D",
             "app.desktop:_open_window.loaded",
             "webview loaded event",
-            {"page": page},
+            {"page": page, "renderer": getattr(webview, "renderer", None)},
         )
+        if gui_smoke_test:
+            try:
+                renderer = str(getattr(webview, "renderer", "") or "")
+                _validate_gui_smoke_page(renderer, page)
+                logger.info(
+                    "DESKTOP_GUI_SMOKE_TEST_OK renderer=%s ready_state=%s "
+                    "body_text_length=%s html_length=%s",
+                    renderer,
+                    page["readyState"],
+                    page["bodyTextLength"],
+                    page["htmlLength"],
+                )
+            except Exception as exc:
+                gui_smoke_state["error"] = str(exc)
+                logger.exception("Windows GUI 冒烟验证失败")
+            finally:
+                gui_smoke_state["completed"] = True
+                gui_smoke_done.set()
+                with contextlib.suppress(Exception):
+                    window.destroy()
 
     window.events.loaded += _on_loaded
     _report_debug_event(
@@ -506,9 +557,28 @@ def _open_window(url: str) -> None:
     )
     # #endregion
 
+    if gui_smoke_test:
+        def _close_stalled_gui_smoke() -> None:
+            if gui_smoke_done.wait(_GUI_SMOKE_TIMEOUT_SECONDS):
+                return
+            gui_smoke_state["error"] = (
+                f"webview loaded event timed out after {_GUI_SMOKE_TIMEOUT_SECONDS:.0f}s"
+            )
+            with contextlib.suppress(Exception):
+                window.destroy()
+
+        threading.Thread(
+            target=_close_stalled_gui_smoke,
+            daemon=True,
+            name="gui-smoke-watchdog",
+        ).start()
+
     try:
         # pywebview 会阻塞主线程直到窗口关闭
-        webview.start(debug=False)
+        webview.start(
+            gui="edgechromium" if sys.platform == "win32" else None,
+            debug=False,
+        )
     except Exception:
         # #region debug-point A-D:start-failure
         _report_debug_event(
@@ -519,6 +589,14 @@ def _open_window(url: str) -> None:
         )
         # #endregion
         raise
+
+    if gui_smoke_test:
+        if not gui_smoke_state["completed"]:
+            raise RuntimeError(
+                str(gui_smoke_state["error"] or "webview closed before loaded event")
+            )
+        if gui_smoke_state["error"]:
+            raise RuntimeError(str(gui_smoke_state["error"]))
 
 
 def main() -> int:
@@ -539,6 +617,8 @@ def main() -> int:
     _setup_logging()
 
     smoke_test = os.getenv(_SMOKE_TEST_ENV, "").strip() == "1"
+    gui_smoke_test = os.getenv(_GUI_SMOKE_TEST_ENV, "").strip() == "1"
+    automated_test = smoke_test or gui_smoke_test
     server_ref: dict[str, Any] = {}
     server_thread: threading.Thread | None = None
 
@@ -570,8 +650,9 @@ def main() -> int:
             _release_single_instance()
             return 1
 
-        if smoke_test:
+        if automated_test:
             _run_smoke_checks(port)
+        if smoke_test and not gui_smoke_test:
             return 0
 
         url = f"http://127.0.0.1:{port}"
@@ -588,7 +669,7 @@ def main() -> int:
         # 写完整 traceback 到 data/desktop.log, 并弹原生 MessageBox 让用户截图反馈。
         # 必须排在 KeyboardInterrupt 之后 —— Exception 是基类, 在前会遮蔽它。
         logger.exception("桌面客户端启动失败")
-        if not smoke_test:
+        if not automated_test:
             _show_crash("TSP 启动失败", traceback.format_exc())
         return 1
     finally:

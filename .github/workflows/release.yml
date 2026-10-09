@@ -18,7 +18,7 @@ on:
       version:
         description: '版本号 (如 v0.1.33, 用作 Release tag 和标题; 必须与 frontend/package.json 的 version 一致, 否则流水线直接失败)'
         required: true
-        default: 'v0.3.6'
+        default: 'v0.3.7'
       platforms:
         description: '要构建的平台 (逗号分隔: windows,macos,linux)'
         required: true
@@ -66,10 +66,10 @@ jobs:
           import json, sys
           requested = '${{ github.event.inputs.platforms }}'.split(',')
           requested = [r.strip() for r in requested if r.strip()]
-          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.6 → 0.3.6
+          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.7 → 0.3.7
           all_platforms = json.loads('''$ALL''')
           selected = [p for p in all_platforms if p['platform'] in requested]
-          # 产物文件名带版本号 (TSP-Setup-x64-0.3.6.exe): 用户下载后一眼可辨版本
+          # 产物文件名带版本号 (TSP-Setup-x64-0.3.7.exe): 用户下载后一眼可辨版本
           for p in selected:
               stem, _, ext = p['artifact'].rpartition('.')
               p['artifact'] = f'{stem}-{ver}.{ext}'
@@ -327,7 +327,10 @@ jobs:
             if (-not (Test-Path $exe)) {
               throw "Installed executable is missing: $exe"
             }
+            # 同时执行 HTTP/插件自检和真实 GUI 渲染。后者必须进入
+            # _open_window，确认 EdgeChromium 已加载且 DOM 非空后自动关窗。
             $env:TSP_DESKTOP_SMOKE_TEST = '1'
+            $env:TSP_DESKTOP_GUI_SMOKE_TEST = '1'
             $app = Start-Process -FilePath $exe -PassThru
             if (-not $app.WaitForExit(240000)) {
               Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
@@ -342,6 +345,9 @@ jobs:
             if (-not (Test-Path $desktopLog) -or -not (Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet)) {
               throw 'Installed smoke success marker is missing from desktop.log'
             }
+            if (-not (Select-String -Path $desktopLog -Pattern 'DESKTOP_GUI_SMOKE_TEST_OK renderer=edgechromium' -Quiet)) {
+              throw 'Installed GUI smoke success marker is missing from desktop.log'
+            }
             Copy-Item $desktopLog (Join-Path $artifactDir 'installed-desktop.log') -Force
             $marker = Join-Path $dataDir 'ci-uninstall-preserve.txt'
             Set-Content -Path $marker -Value 'preserve' -Encoding Ascii
@@ -351,6 +357,7 @@ jobs:
               throw 'Inno Setup uninstaller is missing'
             }
             Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
+            Remove-Item Env:TSP_DESKTOP_GUI_SMOKE_TEST -ErrorAction SilentlyContinue
             $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @(
               '/VERYSILENT',
               '/SUPPRESSMSGBOXES',
@@ -369,6 +376,7 @@ jobs:
           }
           finally {
             Remove-Item Env:TSP_DESKTOP_SMOKE_TEST -ErrorAction SilentlyContinue
+            Remove-Item Env:TSP_DESKTOP_GUI_SMOKE_TEST -ErrorAction SilentlyContinue
             $remainingLog = Join-Path $installDir 'data/desktop.log'
             if ((Test-Path $remainingLog) -and -not (Test-Path (Join-Path $artifactDir 'installed-desktop.log'))) {
               Copy-Item $remainingLog (Join-Path $artifactDir 'installed-desktop.log') -Force

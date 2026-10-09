@@ -2,14 +2,44 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import socket
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app import desktop
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class _FakeLoadedEvent:
+    def __init__(self) -> None:
+        self.callback = None
+
+    def __iadd__(self, callback):
+        self.callback = callback
+        return self
+
+
+class _FakeWindow:
+    def __init__(self) -> None:
+        self.events = SimpleNamespace(loaded=_FakeLoadedEvent())
+        self.destroyed = False
+
+    def evaluate_js(self, _script: str) -> dict:
+        return {
+            "readyState": "complete",
+            "location": "http://127.0.0.1:3018/login",
+            "title": "TSP",
+            "bodyTextLength": 42,
+            "htmlLength": 512,
+        }
+
+    def destroy(self) -> None:
+        self.destroyed = True
 
 
 def test_smoke_plugin_validation_accepts_complete_mootdx() -> None:
@@ -66,6 +96,83 @@ def test_pyinstaller_collects_default_data_provider() -> None:
     assert '"mootdx", "tdxpy"' in spec
     assert 'BUILTIN_PLUGINS.glob("*/plugin.yaml")' in spec
     assert '"mootdx", "tdxpy",' in spec
+    assert '"pywebview", "pythonnet", "clr-loader",' in spec
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (importlib.metadata.PackageNotFoundError(), "metadata-missing"),
+        (RuntimeError("broken metadata"), "metadata-error:RuntimeError"),
+    ],
+)
+def test_distribution_metadata_errors_are_nonfatal(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    expected: str,
+) -> None:
+    def _missing(_name: str) -> str:
+        raise error
+
+    monkeypatch.setattr(importlib.metadata, "version", _missing)
+
+    assert desktop._safe_distribution_version("pywebview") == expected
+
+
+def test_gui_smoke_opens_window_and_validates_edgechromium(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake_window = _FakeWindow()
+    fake_webview = SimpleNamespace(renderer=None)
+
+    def _create_window(*_args, **_kwargs):
+        return fake_window
+
+    def _start(**_kwargs) -> None:
+        fake_webview.renderer = "edgechromium"
+        assert fake_window.events.loaded.callback is not None
+        fake_window.events.loaded.callback()
+
+    def _missing_metadata(_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError
+
+    fake_webview.create_window = _create_window
+    fake_webview.start = _start
+    monkeypatch.setattr(importlib.metadata, "version", _missing_metadata)
+    monkeypatch.setitem(sys.modules, "webview", fake_webview)
+    monkeypatch.setenv(desktop._GUI_SMOKE_TEST_ENV, "1")
+
+    with caplog.at_level("INFO"):
+        desktop._open_window("http://127.0.0.1:3018")
+
+    assert fake_window.destroyed
+    assert "DESKTOP_GUI_SMOKE_TEST_OK renderer=edgechromium" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("renderer", "page", "message"),
+    [
+        ("mshtml", {}, "renderer"),
+        (
+            "edgechromium",
+            {
+                "readyState": "complete",
+                "location": "http://127.0.0.1:3018",
+                "bodyTextLength": 0,
+                "htmlLength": 100,
+            },
+            "body text",
+        ),
+    ],
+)
+def test_gui_smoke_rejects_invalid_renderer_or_blank_page(
+    renderer: str,
+    page: dict,
+    message: str,
+) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        desktop._validate_gui_smoke_page(renderer, page)
 
 
 def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
@@ -80,6 +187,11 @@ def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
     assert workflow.count(
         "Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
     ) == 1
+    assert "$env:TSP_DESKTOP_GUI_SMOKE_TEST = '1'" in workflow
+    assert (
+        "Select-String -Path $desktopLog -Pattern "
+        "'DESKTOP_GUI_SMOKE_TEST_OK renderer=edgechromium' -Quiet"
+    ) in workflow
 
 
 def test_release_stays_draft_until_update_manifest_is_uploaded() -> None:

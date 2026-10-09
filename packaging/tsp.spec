@@ -128,6 +128,9 @@ for pkg in (
     "uvicorn", "polars", "duckdb", "pyarrow", "httpx", "numpy", "pandas",
     "openai", "platformdirs", "winotify", "plyer", "apscheduler",
     "python-dotenv", "fastexcel", "mootdx", "tdxpy",
+    # 桌面启动诊断和 Windows GUI 后端会读取这些发行包的元数据。冻结包必须
+    # 一并收集，避免 importlib.metadata.version() 抛 PackageNotFoundError。
+    "pywebview", "pythonnet", "clr-loader",
 ):
     datas += _safe_metadata(pkg)
 
