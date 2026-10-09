@@ -119,7 +119,8 @@ DATA_DIR=./data       # Parquet / DuckDB 数据存储目录
 AUTH_EMAIL='admin@example.com'
 AUTH_PASSWORD='你的密码'  # 至少 8 位; 仅首次生效
 
-# 浏览器注册验证码 SMTP
+# 浏览器注册口令与验证码 SMTP
+AUTH_REGISTRATION_SECRET='请设置注册口令'  # 仅用于首次生成哈希
 AUTH_SMTP_HOST='smtp.example.com'
 AUTH_SMTP_PORT=465
 AUTH_SMTP_SECURITY='ssl'  # ssl | starttls | none
@@ -130,7 +131,7 @@ AUTH_SMTP_FROM_ADDRESS='no-reply@example.com'
 
 `AUTH_EMAIL` 与 `AUTH_PASSWORD` 同时设置时, 服务首次启动会预置邮箱账户。预置账户是部署初始化, 不要求验证码。已有账户后环境变量不再覆盖页面中维护的密码。
 
-浏览器注册必须校验邮件验证码。全新部署要开放浏览器注册时需配置 `AUTH_SMTP_*`; `AUTH_SMTP_HOST` 留空时会尝试复用设置页已经保存的邮件 SMTP。验证码 10 分钟有效、60 秒后可重发, 连续输错 5 次后失效。
+浏览器注册会先校验注册口令, 正确后才发送邮件验证码。`AUTH_REGISTRATION_SECRET` 首次启动后会以带随机盐的 PBKDF2 哈希保存到 `auth.json`, 确认成功后可从 `.env` 删除明文并重启。全新部署还需配置 `AUTH_SMTP_*`; `AUTH_SMTP_HOST` 留空时会尝试复用设置页已经保存的邮件 SMTP。验证码 10 分钟有效、60 秒后可重发, 连续输错 5 次后失效。
 
 只配置 `AUTH_PASSWORD` 时保留旧版兼容模式, 首次访问需使用原密码绑定邮箱。密码建议使用单引号包裹; `.env` 文件权限应保持 `600`。
 

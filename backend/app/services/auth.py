@@ -23,7 +23,7 @@ from app.services.fs_utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _PBKDF2_ITER = 200_000
 _SALT_LEN = 16
 _TOKEN_BYTES = 32
@@ -116,6 +116,48 @@ def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
     return _secrets.compare_digest(actual, expected)
 
 
+def _registration_secret_fields(data: dict) -> dict:
+    return {
+        key: data[key]
+        for key in ("registration_secret_hash", "registration_secret_salt")
+        if data.get(key)
+    }
+
+
+def has_registration_secret() -> bool:
+    data = _load()
+    return bool(
+        data.get("registration_secret_hash")
+        and data.get("registration_secret_salt")
+    )
+
+
+def set_registration_secret(secret: str) -> None:
+    """Hash and persist the shared registration secret."""
+    value = str(secret or "").strip()
+    if not 1 <= len(value) <= 128:
+        raise ValueError("注册口令长度必须在 1 到 128 位之间")
+    salt_hex, hash_hex = _hash_password(value)
+    with _lock:
+        data = _load()
+        data["schema_version"] = _SCHEMA_VERSION
+        data["registration_secret_hash"] = hash_hex
+        data["registration_secret_salt"] = salt_hex
+        data["updated_at"] = int(time.time())
+        data.setdefault("sessions", {})
+        _save(data)
+    logger.info("registration secret hash initialized")
+
+
+def verify_registration_secret(secret: str) -> bool:
+    """Verify without exposing whether malformed hash data was persisted."""
+    value = str(secret or "")
+    data = _load()
+    salt_hex = str(data.get("registration_secret_salt") or _DUMMY_SALT.hex())
+    hash_hex = str(data.get("registration_secret_hash") or _DUMMY_HASH)
+    return has_registration_secret() and _verify_password(value, salt_hex, hash_hex)
+
+
 def _users(data: dict) -> dict[str, dict]:
     users = data.get("users")
     return users if isinstance(users, dict) else {}
@@ -198,6 +240,7 @@ def register_user(email: str, password: str) -> tuple[str, dict]:
         user = _new_user(normalized, password)
         data = {
             "schema_version": _SCHEMA_VERSION,
+            **_registration_secret_fields(data),
             "users": {**_users(data), user["id"]: user},
             "sessions": data.get("sessions") or {},
             "updated_at": int(time.time()),
@@ -239,6 +282,7 @@ def migrate_legacy_user(email: str, password: str) -> tuple[str, dict] | None:
         _sessions.clear()
         migrated = {
             "schema_version": _SCHEMA_VERSION,
+            **_registration_secret_fields(data),
             "users": {user["id"]: user},
             "sessions": {},
             "updated_at": now,
@@ -321,8 +365,11 @@ def set_password(password: str) -> None:
     _validate_password(password, minimum=6)
     salt_hex, hash_hex = _hash_password(password)
     with _lock:
+        data = _load()
         _sessions.clear()
         _save({
+            "schema_version": _SCHEMA_VERSION,
+            **_registration_secret_fields(data),
             "password_hash": hash_hex,
             "password_salt": salt_hex,
             "updated_at": int(time.time()),
@@ -330,6 +377,28 @@ def set_password(password: str) -> None:
         })
     _configured_cache = True
     logger.info("legacy access password set")
+
+
+def bootstrap_registration_secret_from_env() -> bool:
+    """Persist a one-way hash from AUTH_REGISTRATION_SECRET once."""
+    from app.config import _ENV_FILE, settings
+
+    secret = (settings.auth_registration_secret or "").strip()
+    if _ENV_FILE.is_file():
+        from dotenv import dotenv_values
+
+        raw = dotenv_values(_ENV_FILE, encoding="utf-8", interpolate=False)
+        raw_secret = raw.get("AUTH_REGISTRATION_SECRET")
+        if isinstance(raw_secret, str) and raw_secret.strip():
+            secret = raw_secret.strip()
+    if not secret or has_registration_secret():
+        return False
+    try:
+        set_registration_secret(secret)
+        return True
+    except ValueError as exc:
+        logger.warning("registration secret bootstrap skipped: %s", exc)
+        return False
 
 
 def bootstrap_from_env() -> bool:

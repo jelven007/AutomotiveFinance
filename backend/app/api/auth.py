@@ -166,6 +166,7 @@ class AccountIn(BaseModel):
 
 class RegistrationCodeIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
+    registration_secret: str = Field(min_length=1, max_length=128)
 
 
 class LegacyMigrationIn(BaseModel):
@@ -187,7 +188,7 @@ def auth_status(request: Request) -> dict:
         "configured": auth.is_configured(),
         "has_users": auth.has_users(),
         "legacy_migration_required": auth.requires_legacy_migration(),
-        "registration_enabled": True,
+        "registration_enabled": auth.has_registration_secret(),
         "email_verification_required": True,
         "authenticated": authenticated,
         "user": auth.current_user(token) if authenticated and token else None,
@@ -196,13 +197,9 @@ def auth_status(request: Request) -> dict:
 
 @router.post("/register/code")
 def send_registration_code(req: RegistrationCodeIn, request: Request) -> dict:
-    """Send a short-lived verification code to an unregistered email."""
+    """Verify the registration secret, then email a short-lived code."""
     try:
         normalized = auth.normalize_email(req.email)
-        if auth.is_email_registered(normalized):
-            raise HTTPException(status_code=409, detail="该邮箱已注册")
-    except HTTPException:
-        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if auth.requires_legacy_migration():
@@ -213,6 +210,12 @@ def send_registration_code(req: RegistrationCodeIn, request: Request) -> dict:
         )
 
     _record_registration_attempt(_client_ip(request))
+    if not auth.has_registration_secret():
+        raise HTTPException(status_code=503, detail="注册口令尚未配置")
+    if not auth.verify_registration_secret(req.registration_secret):
+        raise HTTPException(status_code=403, detail="注册口令错误")
+    if auth.is_email_registered(normalized):
+        raise HTTPException(status_code=409, detail="该邮箱已注册")
     try:
         cooldown = auth_verification.send_registration_code(normalized)
     except auth_verification.VerificationCodeCooldownError as exc:

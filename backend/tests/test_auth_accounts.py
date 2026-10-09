@@ -22,6 +22,7 @@ def isolated_auth_store(
     monkeypatch.setattr(app_config.settings, "data_dir", tmp_path)
     monkeypatch.setattr(app_config.settings, "auth_email", "")
     monkeypatch.setattr(app_config.settings, "auth_password", "")
+    monkeypatch.setattr(app_config.settings, "auth_registration_secret", "")
     monkeypatch.setattr(app_config.settings, "auth_smtp_host", "")
     monkeypatch.setattr(app_config.settings, "auth_smtp_port", 465)
     monkeypatch.setattr(app_config.settings, "auth_smtp_security", "ssl")
@@ -109,6 +110,50 @@ def test_bootstrap_creates_email_account(
     assert auth.bootstrap_from_env() is False
 
 
+def test_registration_secret_is_hashed_and_preserved(
+    isolated_auth_store: ModuleType,
+) -> None:
+    auth = isolated_auth_store
+    secret = "test-registration-secret"
+
+    auth.set_registration_secret(secret)
+    auth_path = app_config.settings.data_dir / "user_data" / "auth.json"
+
+    assert auth.has_registration_secret() is True
+    assert auth.verify_registration_secret(secret) is True
+    assert auth.verify_registration_secret("wrong-secret") is False
+    assert secret not in auth_path.read_text(encoding="utf-8")
+    assert stat.S_IMODE(auth_path.stat().st_mode) == 0o600
+
+    auth.register_user("user@example.com", "password-123")
+
+    assert auth.verify_registration_secret(secret) is True
+
+
+def test_registration_secret_bootstraps_once_from_env(
+    isolated_auth_store: ModuleType,
+) -> None:
+    auth = isolated_auth_store
+    env_path = app_config.settings.data_dir / ".env"
+    app_config._ENV_FILE = env_path
+    env_path.write_text(
+        "AUTH_REGISTRATION_SECRET='first-secret'\n",
+        encoding="utf-8",
+    )
+
+    assert auth.bootstrap_registration_secret_from_env() is True
+    assert auth.verify_registration_secret("first-secret") is True
+
+    env_path.write_text(
+        "AUTH_REGISTRATION_SECRET='replacement-secret'\n",
+        encoding="utf-8",
+    )
+
+    assert auth.bootstrap_registration_secret_from_env() is False
+    assert auth.verify_registration_secret("first-secret") is True
+    assert auth.verify_registration_secret("replacement-secret") is False
+
+
 def test_account_api_register_login_change_password(
     isolated_auth_store: ModuleType,
 ) -> None:
@@ -170,6 +215,7 @@ def test_registration_code_endpoint_sends_and_enforces_cooldown(
     isolated_auth_store: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    isolated_auth_store.set_registration_secret("test-registration-secret")
     app_config.settings.auth_smtp_host = "smtp.example.com"
     app_config.settings.auth_smtp_username = "sender@example.com"
     app_config.settings.auth_smtp_password = "smtp-secret"
@@ -193,9 +239,22 @@ def test_registration_code_endpoint_sends_and_enforces_cooldown(
     app.include_router(auth_api.router)
     client = TestClient(app)
 
+    rejected = client.post(
+        "/api/auth/register/code",
+        json={
+            "email": "New.User@example.com",
+            "registration_secret": "wrong-secret",
+        },
+    )
+    assert rejected.status_code == 403
+    assert deliveries == []
+
     sent = client.post(
         "/api/auth/register/code",
-        json={"email": "New.User@example.com"},
+        json={
+            "email": "New.User@example.com",
+            "registration_secret": "test-registration-secret",
+        },
     )
 
     assert sent.status_code == 200
@@ -208,7 +267,10 @@ def test_registration_code_endpoint_sends_and_enforces_cooldown(
 
     cooldown = client.post(
         "/api/auth/register/code",
-        json={"email": "new.user@example.com"},
+        json={
+            "email": "new.user@example.com",
+            "registration_secret": "test-registration-secret",
+        },
     )
     assert cooldown.status_code == 429
     assert int(cooldown.headers["retry-after"]) > 0

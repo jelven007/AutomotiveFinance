@@ -31,7 +31,7 @@ describe('auth API', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await api.authSendRegistrationCode('user@example.com')
+    await api.authSendRegistrationCode('user@example.com', 'test-registration-secret')
     await api.authRegister('user@example.com', 'password-123', '123456')
     await api.authLogin('user@example.com', 'password-123')
 
@@ -40,7 +40,10 @@ describe('auth API', () => {
       '/api/auth/register/code',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ email: 'user@example.com' }),
+        body: JSON.stringify({
+          email: 'user@example.com',
+          registration_secret: 'test-registration-secret',
+        }),
       }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(

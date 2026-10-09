@@ -104,10 +104,11 @@ async def _application_lifespan(app: FastAPI):
         __version__, tf_client.current_mode(),
     )
 
-    # 首次启动可通过 AUTH_EMAIL/AUTH_PASSWORD 预置账户。
+    # 首次启动可通过环境变量预置注册口令哈希与邮箱账户。
     # 仅配置旧 AUTH_PASSWORD 时进入待绑定邮箱的兼容模式。
     try:
         from app.services import auth as auth_service
+        auth_service.bootstrap_registration_secret_from_env()
         auth_service.bootstrap_from_env()
     except Exception as e:  # noqa: BLE001
         logger.warning("auth bootstrap failed: %s", e)

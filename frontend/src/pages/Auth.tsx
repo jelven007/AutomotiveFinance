@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, EyeOff, KeyRound, Loader2, LockKeyhole, Mail, ShieldAlert, UserPlus } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, Loader2, LockKeyhole, Mail, ShieldAlert, ShieldCheck, UserPlus } from 'lucide-react'
 import { Logo } from '@/components/Logo'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -15,6 +15,7 @@ export function Auth() {
   const [searchParams] = useSearchParams()
   const [mode, setMode] = useState<AuthMode>('login')
   const [email, setEmail] = useState('')
+  const [registrationSecret, setRegistrationSecret] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
   const [resendSeconds, setResendSeconds] = useState(0)
   const [password, setPassword] = useState('')
@@ -52,9 +53,10 @@ export function Auth() {
   }, [resendSeconds])
 
   const sendCodeMutation = useMutation({
-    mutationFn: () => api.authSendRegistrationCode(email.trim()),
+    mutationFn: () => api.authSendRegistrationCode(email.trim(), registrationSecret),
     onSuccess: (result) => {
       setResendSeconds(result.cooldown_seconds)
+      setRegistrationSecret('')
       setLocalError('')
     },
     onError: (error: Error) => setLocalError(error.message || '验证码发送失败'),
@@ -77,6 +79,7 @@ export function Auth() {
     setMode(nextMode)
     setPassword('')
     setConfirmPassword('')
+    setRegistrationSecret('')
     setVerificationCode('')
     setLocalError('')
     sendCodeMutation.reset()
@@ -96,6 +99,10 @@ export function Auth() {
     const normalizedEmail = email.trim()
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
       setLocalError('请输入有效的邮箱地址')
+      return
+    }
+    if (!registrationSecret) {
+      setLocalError('请输入注册口令')
       return
     }
     sendCodeMutation.mutate()
@@ -139,7 +146,7 @@ export function Auth() {
   const subtitle = isMigrate
     ? '使用原访问密码绑定邮箱，现有数据和设置不会变化'
     : isRegister
-      ? '验证邮箱后创建访问账户'
+      ? '输入注册口令并验证邮箱后创建账户'
       : '登录后继续使用量化工作台'
 
   return (
@@ -211,6 +218,28 @@ export function Auth() {
 
           {isRegister && (
             <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-secondary">注册口令</span>
+              <span className="relative block">
+                <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                <input
+                  type="password"
+                  value={registrationSecret}
+                  onChange={(event) => {
+                    setRegistrationSecret(event.target.value)
+                    setLocalError('')
+                    sendCodeMutation.reset()
+                  }}
+                  placeholder="输入注册口令"
+                  autoComplete="off"
+                  maxLength={128}
+                  className="h-11 w-full rounded-btn border border-border bg-surface pl-10 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted/60 focus:border-accent/60"
+                />
+              </span>
+            </label>
+          )}
+
+          {isRegister && (
+            <label className="block">
               <span className="mb-1.5 block text-xs font-medium text-secondary">邮箱验证码</span>
               <span className="flex gap-2">
                 <span className="relative min-w-0 flex-1">
@@ -232,7 +261,12 @@ export function Auth() {
                 <button
                   type="button"
                   onClick={handleSendCode}
-                  disabled={sendCodeMutation.isPending || resendSeconds > 0 || !email.trim()}
+                  disabled={
+                    sendCodeMutation.isPending
+                    || resendSeconds > 0
+                    || !email.trim()
+                    || !registrationSecret
+                  }
                   className="inline-flex h-11 w-28 shrink-0 items-center justify-center rounded-btn border border-border bg-surface px-2 text-xs font-medium text-secondary transition-colors hover:border-accent/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {sendCodeMutation.isPending

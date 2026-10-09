@@ -142,6 +142,9 @@ class Settings(BaseSettings):
     # 创建邮箱账户; 只配置 AUTH_PASSWORD 时保留旧版密码模式, 登录后可绑定邮箱。
     auth_email: str = ""
     auth_password: str = ""
+    # One-time bootstrap value. It is hashed into auth.json and may then be
+    # removed from the environment.
+    auth_registration_secret: str = ""
     # Public registration must be able to send before any user is signed in.
     # If AUTH_SMTP_HOST is empty, registration falls back to SMTP saved in settings.
     auth_smtp_host: str = ""

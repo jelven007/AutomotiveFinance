@@ -2190,10 +2190,10 @@ export const api = {
   // ===== Auth =====
   authStatus: () =>
     request<AuthStatus>('/api/auth/status'),
-  authSendRegistrationCode: (email: string) =>
+  authSendRegistrationCode: (email: string, registrationSecret: string) =>
     request<{ ok: boolean; cooldown_seconds: number }>('/api/auth/register/code', {
       method: 'POST',
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, registration_secret: registrationSecret }),
     }),
   authRegister: (email: string, password: string, code: string) =>
     request<AuthResult>('/api/auth/register', {

@@ -139,7 +139,7 @@ git pull
 
 ## 邮箱账户设置(公网部署必读)
 
-首次打开系统可使用邮箱注册。注册前必须发送并校验 6 位邮箱验证码, 验证码 10 分钟有效。多个账户共享同一套业务数据和系统配置。
+首次打开系统可使用邮箱注册。注册时先校验共享注册口令, 正确后才发送 6 位邮箱验证码; 验证码 10 分钟有效。多个账户共享同一套业务数据和系统配置。
 
 自动化部署可在 `.env` 中预置首个账户:
 
@@ -150,9 +150,10 @@ AUTH_PASSWORD='至少八位的密码'
 
 两项同时配置时, 服务首次启动会创建邮箱账户。该部署初始化不要求验证码; 已有账户时会跳过, 不会覆盖页面中修改过的密码。
 
-要开放浏览器注册, 全新部署还需配置发信 SMTP:
+要开放浏览器注册, 全新部署还需配置一次性初始化口令和发信 SMTP:
 
 ```bash
+AUTH_REGISTRATION_SECRET='请设置注册口令'
 AUTH_SMTP_HOST='smtp.example.com'
 AUTH_SMTP_PORT=465
 AUTH_SMTP_SECURITY='ssl'
@@ -160,6 +161,8 @@ AUTH_SMTP_USERNAME='no-reply@example.com'
 AUTH_SMTP_PASSWORD='SMTP 密码或授权码'
 AUTH_SMTP_FROM_ADDRESS='no-reply@example.com'
 ```
+
+注册口令首次启动后以带随机盐的 PBKDF2 哈希写入 `auth.json`。确认初始化成功后可从 `.env` 删除 `AUTH_REGISTRATION_SECRET` 并重启, 避免长期保留明文。
 
 `AUTH_SMTP_SECURITY` 可选 `ssl`、`starttls` 或 `none`。`AUTH_SMTP_HOST` 留空时会尝试复用设置页保存的邮件 SMTP, 但全新安装尚不能进入设置页, 因此应配置环境变量或先预置首个账户。
 
