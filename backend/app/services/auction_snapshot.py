@@ -33,7 +33,7 @@ _DATE_RE = re.compile(r"^date=(\d{4}-\d{2}-\d{2})$")
 _CAPTURE_START = dt_time(9, 25, 5)
 _CAPTURE_END = dt_time(9, 29, 30)
 _MIN_COVERAGE_RATIO = 0.95
-_MIN_SESSION_MATCH_RATIO = 0.80
+_MIN_PREV_CLOSE_MATCH_RATIO = 0.80
 _LOCK = threading.Lock()
 _FAILURE_ALERT_LOCK = threading.Lock()
 _NON_FAILURE_STATES = {"ready", "already_captured", "market_closed"}
@@ -287,6 +287,8 @@ def capture_auction_snapshot(
                 "coverage_ratio": coverage_ratio,
             }
 
+        # TDX servertime is each symbol's last quote event, not this batch's
+        # fetch time. Keep its auction-window ratio as diagnostics only.
         source_time_match_ratio = (
             sum(_source_time_in_window(row.get("source_time")) for row in rows_by_symbol.values())
             / quote_count
@@ -305,9 +307,8 @@ def capture_auction_snapshot(
         minimum_comparisons = min(100, universe.height)
         prev_close_match_ratio = close_matches / comparable if comparable else 0.0
         if (
-            source_time_match_ratio < _MIN_SESSION_MATCH_RATIO
-            or comparable < minimum_comparisons
-            or prev_close_match_ratio < _MIN_SESSION_MATCH_RATIO
+            comparable < minimum_comparisons
+            or prev_close_match_ratio < _MIN_PREV_CLOSE_MATCH_RATIO
         ):
             source_time_samples = sorted({
                 str(row.get("source_time") or "").strip()
@@ -315,19 +316,12 @@ def capture_auction_snapshot(
                 if row.get("source_time")
             })[:5]
             reasons: list[str] = []
-            if source_time_match_ratio < _MIN_SESSION_MATCH_RATIO:
-                samples = "、".join(source_time_samples) or "缺失"
-                reasons.append(
-                    f"行情时间校验未通过: 09:25-09:30 窗口内报价占 "
-                    f"{source_time_match_ratio:.1%}, 要求至少 {_MIN_SESSION_MATCH_RATIO:.0%}"
-                    f" (源时间示例: {samples})"
-                )
             if comparable < minimum_comparisons:
                 reasons.append(f"昨收可比样本不足: {comparable}/{minimum_comparisons}")
-            if prev_close_match_ratio < _MIN_SESSION_MATCH_RATIO:
+            if prev_close_match_ratio < _MIN_PREV_CLOSE_MATCH_RATIO:
                 reasons.append(
                     f"昨收匹配率不足: {prev_close_match_ratio:.1%}, "
-                    f"要求至少 {_MIN_SESSION_MATCH_RATIO:.0%}"
+                    f"要求至少 {_MIN_PREV_CLOSE_MATCH_RATIO:.0%}"
                 )
             return {
                 "state": "stale_snapshot",

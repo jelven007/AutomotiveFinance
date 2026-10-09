@@ -151,6 +151,26 @@ def test_capture_accepts_tdx_unpadded_hour(tmp_path, monkeypatch, source_time):
     assert frame["source_time"].to_list() == [source_time, source_time]
 
 
+def test_capture_accepts_current_day_snapshot_with_old_per_symbol_event_times(
+    tmp_path,
+    monkeypatch,
+):
+    """TDX servertime is the symbol's last event, not the batch fetch time."""
+    _seed(tmp_path)
+    provider = _Provider(source_time="09:15:13.146")
+
+    result = _capture(monkeypatch, tmp_path, provider)
+
+    assert result["state"] == "ready"
+    assert result["coverage_ratio"] == 1.0
+    assert result["prev_close_match_ratio"] == 1.0
+    assert result["source_time_match_ratio"] == 0.0
+    frame = pl.read_parquet(
+        tmp_path / "auction_snapshot" / f"date={DAY.isoformat()}" / "part.parquet"
+    )
+    assert frame["source_time"].to_list() == ["09:15:13.146", "09:15:13.146"]
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -172,16 +192,18 @@ def test_source_time_requires_valid_time_inside_auction_window(value, expected):
     assert auction_snapshot._source_time_in_window(value) is expected
 
 
-def test_capture_rejects_previous_session_snapshot(tmp_path, monkeypatch):
+def test_capture_rejects_previous_session_snapshot_by_trading_day_evidence(
+    tmp_path,
+    monkeypatch,
+):
     _seed(tmp_path)
-    provider = _Provider(source_time="15:17:25.434")
+    provider = _Provider(source_time="15:17:25.434", prev_close=8.0)
 
     result = _capture(monkeypatch, tmp_path, provider)
 
     assert result["state"] == "stale_snapshot"
     assert result["source_time_match_ratio"] == 0.0
-    assert "行情时间" in result["message"]
-    assert "15:17:25.434" in result["message"]
+    assert "昨收匹配率不足" in result["message"]
     assert result["source_time_samples"] == ["15:17:25.434"]
     assert not (tmp_path / "auction_snapshot").exists()
 
@@ -198,9 +220,13 @@ def test_capture_rejects_prev_close_mismatch(tmp_path, monkeypatch):
     assert not (tmp_path / "auction_snapshot").exists()
 
 
-def test_stale_capture_notification_explains_time_failure(tmp_path, monkeypatch):
+def test_stale_capture_notification_explains_day_identity_failure(tmp_path, monkeypatch):
     _seed(tmp_path)
-    result = _capture(monkeypatch, tmp_path, _Provider(source_time="15:17:25.434"))
+    result = _capture(
+        monkeypatch,
+        tmp_path,
+        _Provider(source_time="15:17:25.434", prev_close=8.0),
+    )
     monkeypatch.setattr(auction_snapshot.preferences, "get_feishu_webhook_url", lambda: "")
     pushed = []
 
@@ -210,7 +236,7 @@ def test_stale_capture_notification_explains_time_failure(tmp_path, monkeypatch)
 
     events = alert_store.list_recent(tmp_path, type="auction_capture_failed")
     assert len(events) == 1
-    assert "行情时间校验未通过" in events[0]["message"]
+    assert "昨收匹配率不足" in events[0]["message"]
     assert "stale_snapshot" not in events[0]["message"]
     assert events[0]["diagnostics"]["source_time_samples"] == ["15:17:25.434"]
     assert pushed == events
@@ -389,15 +415,19 @@ def test_scheduler_registers_retries_and_in_window_catchup(monkeypatch):
         "auction_snapshot_8",
         "auction_snapshot_25",
         "auction_snapshot_45",
+        "auction_snapshot_final",
         "auction_snapshot_catchup",
     ]
     assert all(call["args"] == [repo] for call in calls)
     assert [call["kwargs"]["notify_on_failure"] for call in calls] == [
         False,
         False,
+        False,
         True,
         False,
     ]
+    assert "minute='29'" in str(calls[3]["trigger"])
+    assert "second='15'" in str(calls[3]["trigger"])
 
 
 def test_scheduler_marks_late_catchup_as_final_attempt(monkeypatch):
@@ -407,7 +437,7 @@ def test_scheduler_marks_late_catchup_as_final_attempt(monkeypatch):
         def add_job(self, func, **kwargs):
             calls.append({"func": func, **kwargs})
 
-    late = datetime(2026, 10, 9, 9, 25, 50, tzinfo=CN_TZ)
+    late = datetime(2026, 10, 9, 9, 29, 20, tzinfo=CN_TZ)
     monkeypatch.setattr(daily_pipeline, "cn_now", lambda: late)
     daily_pipeline._register_auction_jobs(Scheduler(), object())
 

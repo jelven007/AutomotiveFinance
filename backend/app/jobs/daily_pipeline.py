@@ -1228,7 +1228,7 @@ def _register_auction_jobs(scheduler, repo: KlineRepository) -> None:
         scheduler.add_job(
             _run_auction_snapshot,
             args=[repo],
-            kwargs={"notify_on_failure": second == 45},
+            kwargs={"notify_on_failure": False},
             trigger=CronTrigger(
                 day_of_week="mon-fri",
                 hour=9,
@@ -1240,6 +1240,22 @@ def _register_auction_jobs(scheduler, repo: KlineRepository) -> None:
             misfire_grace_time=60,
             replace_existing=True,
         )
+
+    scheduler.add_job(
+        _run_auction_snapshot,
+        args=[repo],
+        kwargs={"notify_on_failure": True},
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour=9,
+            minute=29,
+            second=15,
+            timezone="Asia/Shanghai",
+        ),
+        id="auction_snapshot_final",
+        misfire_grace_time=60,
+        replace_existing=True,
+    )
 
     auction_now = cn_now()
     if (
@@ -1255,7 +1271,7 @@ def _register_auction_jobs(scheduler, repo: KlineRepository) -> None:
                     auction_now.hour,
                     auction_now.minute,
                     auction_now.second,
-                ) >= (9, 25, 45)
+                ) >= (9, 29, 15)
             },
             id="auction_snapshot_catchup",
             next_run_time=auction_now,
