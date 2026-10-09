@@ -222,7 +222,7 @@ export function Auth() {
               <span className="relative block">
                 <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
                 <input
-                  type="password"
+                  type="text"
                   value={registrationSecret}
                   onChange={(event) => {
                     setRegistrationSecret(event.target.value)
