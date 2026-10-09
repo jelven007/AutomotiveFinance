@@ -18,7 +18,7 @@ on:
       version:
         description: '版本号 (如 v0.1.33, 用作 Release tag 和标题; 必须与 frontend/package.json 的 version 一致, 否则流水线直接失败)'
         required: true
-        default: 'v0.3.5'
+        default: 'v0.3.6'
       platforms:
         description: '要构建的平台 (逗号分隔: windows,macos,linux)'
         required: true
@@ -66,10 +66,10 @@ jobs:
           import json, sys
           requested = '${{ github.event.inputs.platforms }}'.split(',')
           requested = [r.strip() for r in requested if r.strip()]
-          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.5 → 0.3.5
+          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.6 → 0.3.6
           all_platforms = json.loads('''$ALL''')
           selected = [p for p in all_platforms if p['platform'] in requested]
-          # 产物文件名带版本号 (TSP-Setup-x64-0.3.5.exe): 用户下载后一眼可辨版本
+          # 产物文件名带版本号 (TSP-Setup-x64-0.3.6.exe): 用户下载后一眼可辨版本
           for p in selected:
               stem, _, ext = p['artifact'].rpartition('.')
               p['artifact'] = f'{stem}-{ver}.{ext}'
@@ -230,6 +230,26 @@ jobs:
           }
           if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
             throw "Windows x64 runner is required, got $env:PROCESSOR_ARCHITECTURE"
+          }
+
+      - name: 下载并验证 WebView2 Runtime 引导安装器
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $redistDir = New-Item -ItemType Directory -Force 'packaging/redist'
+          $bootstrapper = Join-Path $redistDir 'MicrosoftEdgeWebView2Setup.exe'
+          Invoke-WebRequest `
+            -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' `
+            -OutFile $bootstrapper
+          if ((Get-Item $bootstrapper).Length -lt 1MB) {
+            throw 'Downloaded WebView2 bootstrapper is unexpectedly small'
+          }
+          $signature = Get-AuthenticodeSignature $bootstrapper
+          if (
+            $signature.Status -ne 'Valid' -or
+            $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation'
+          ) {
+            throw "Invalid WebView2 bootstrapper signature: $($signature.Status)"
           }
 
       - name: 安装 Inno Setup (仅 Windows)

@@ -22,6 +22,7 @@
 #define MyAppNameEN       "Tick Stock Panel"
 #define MyAppExeName      "TSP.exe"
 #define MyAppPublisher    "TSP"
+#define WebView2SetupName "MicrosoftEdgeWebView2Setup.exe"
 
 ; 版本号: 从 frontend/package.json 读取, 与 Release tag 保持一致
 ; 手动指定更可靠 (CI 传入 /DMyAppVersion)
@@ -88,6 +89,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; 把 PyInstaller 产出的整个文件夹搬进安装目录
 ; Source 路径相对于 .iss 文件所在目录
 Source: "..\backend\dist\TSP\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Windows 10 不保证预装 WebView2 Runtime。引导安装器只嵌入 Setup.exe，
+; 运行时释放到 {tmp}，不会留在 TSP 程序目录。
+Source: "redist\{#WebView2SetupName}"; Flags: dontcopy
 
 [Icons]
 ; 开始菜单
@@ -114,6 +118,65 @@ Filename: "{cmd}"; Parameters: "/C taskkill /F /IM {#MyAppExeName}"; Flags: runh
 ; 生成的 data\ 目录。是否清理 data\ 由下方 [Code] 的卸载询问逻辑决定。
 
 [Code]
+// ── WebView2 Runtime 前置检查与安装 ───────────────────────────────
+// pywebview 在缺少 WebView2 时会静默回退到 MSHTML (IE)。React/Vite 无法在
+// MSHTML 上运行，表现为窗口正常打开但内容全白。安装 TSP 前必须保证 Runtime
+// 存在，不能把这个失败留到用户第一次启动时才暴露。
+const
+  WebView2ClientId = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+function IsValidWebView2Version(const Version: String): Boolean;
+begin
+  Result := (Version <> '') and (Version <> '0.0.0.0');
+end;
+
+function IsWebView2RuntimeInstalled(): Boolean;
+var
+  Version: String;
+  ClientKey: String;
+begin
+  ClientKey := 'Software\Microsoft\EdgeUpdate\Clients\' + WebView2ClientId;
+  Result :=
+    (RegQueryStringValue(HKCU, ClientKey, 'pv', Version) and
+      IsValidWebView2Version(Version)) or
+    (RegQueryStringValue(HKLM32, ClientKey, 'pv', Version) and
+      IsValidWebView2Version(Version)) or
+    (RegQueryStringValue(HKLM64, ClientKey, 'pv', Version) and
+      IsValidWebView2Version(Version));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  BootstrapperPath: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  if IsWebView2RuntimeInstalled() then
+    Exit;
+
+  ExtractTemporaryFile('{#WebView2SetupName}');
+  BootstrapperPath := ExpandConstant('{tmp}\{#WebView2SetupName}');
+  if not Exec(
+      BootstrapperPath,
+      '/silent /install',
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode) then
+  begin
+    Result := '无法启动 Microsoft Edge WebView2 Runtime 安装程序。';
+    Exit;
+  end;
+
+  if (ResultCode <> 0) or not IsWebView2RuntimeInstalled() then
+  begin
+    Result :=
+      'Microsoft Edge WebView2 Runtime 安装失败（错误码 ' +
+      IntToStr(ResultCode) + '）。' + #13#10 +
+      '请检查网络连接后重新运行 TSP 安装程序。';
+  end;
+end;
+
 // ── 辅助函数: 判断目录是否为空 ─────────────────────────────────
 // Inno Setup 内置无 IsDirEmpty, 用 FindFirst/FindNext 自行实现。
 // 用于卸载后清理空的 {app} 壳目录。

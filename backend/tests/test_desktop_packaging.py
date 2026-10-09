@@ -54,6 +54,10 @@ def test_windows_installer_contract() -> None:
     assert "ArchitecturesAllowed=x64compatible" in script
     assert "ArchitecturesInstallIn64BitMode=x64compatible" in script
     assert run_section.count('Filename: "{app}\\{#MyAppExeName}"') == 1
+    assert 'Source: "redist\\{#WebView2SetupName}"; Flags: dontcopy' in script
+    assert "function IsWebView2RuntimeInstalled(): Boolean;" in script
+    assert "function PrepareToInstall(var NeedsRestart: Boolean): String;" in script
+    assert "'/silent /install'" in script
 
 
 def test_pyinstaller_collects_default_data_provider() -> None:
@@ -67,6 +71,9 @@ def test_pyinstaller_collects_default_data_provider() -> None:
 def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
+    assert "https://go.microsoft.com/fwlink/p/?LinkId=2124703" in workflow
+    assert "Get-AuthenticodeSignature $bootstrapper" in workflow
+    assert "Microsoft Corporation" in workflow
     assert workflow.count(
         "Select-String -Path $log -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
     ) == 1

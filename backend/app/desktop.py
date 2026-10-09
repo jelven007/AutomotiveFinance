@@ -43,6 +43,50 @@ _MOOTDX_DATASETS = {
 }
 
 
+# #region debug-point A-E:reporter
+def _report_debug_event(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Temporary network-only instrumentation for windows10-white-screen."""
+    debug_url = os.getenv("TSP_DEBUG_SERVER_URL", "").strip()
+    if not debug_url:
+        return
+
+    payload = json.dumps(
+        {
+            "sessionId": "windows10-white-screen",
+            "runId": os.getenv("TSP_DEBUG_RUN_ID", "pre-fix"),
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "msg": f"[DEBUG] {message}",
+            "data": data or {},
+            "ts": int(time.time() * 1000),
+        },
+        ensure_ascii=True,
+        default=str,
+    ).encode()
+
+    def _send() -> None:
+        import urllib.request
+
+        try:
+            request = urllib.request.Request(
+                debug_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(request, timeout=2).read()
+        except Exception:
+            pass
+
+    threading.Thread(target=_send, daemon=True, name="debug-reporter").start()
+# #endregion
+
+
 def _ensure_data_dir_writable() -> None:
     """确保用户数据目录可写 (lifespan 会创建子目录, 这里只验证根目录)。
 
@@ -353,9 +397,72 @@ def _stop_server(server_ref: dict[str, Any], server_thread: threading.Thread) ->
 
 def _open_window(url: str) -> None:
     """主线程: 用 pywebview 打开桌面窗口。"""
-    import webview  # type: ignore[import-not-found]
+    # #region debug-point A-B:runtime-and-backend
+    import importlib.metadata
+    import importlib.util
+    import platform
 
-    webview.create_window(
+    runtime_versions: dict[str, str] = {}
+    if sys.platform == "win32":
+        import winreg
+
+        runtime_key = (
+            r"Software\Microsoft\EdgeUpdate\Clients"
+            r"\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+        )
+        for label, root, key in (
+            ("machine64", winreg.HKEY_LOCAL_MACHINE, runtime_key),
+            (
+                "machine32",
+                winreg.HKEY_LOCAL_MACHINE,
+                runtime_key.replace("Software\\", "Software\\WOW6432Node\\", 1),
+            ),
+            ("user", winreg.HKEY_CURRENT_USER, runtime_key),
+        ):
+            try:
+                with winreg.OpenKey(root, key) as handle:
+                    runtime_versions[label] = str(winreg.QueryValueEx(handle, "pv")[0])
+            except OSError:
+                runtime_versions[label] = "missing"
+    _report_debug_event(
+        "A,B",
+        "app.desktop:_open_window",
+        "GUI runtime inspection",
+        {
+            "platform": platform.platform(),
+            "windows_version": platform.version(),
+            "frozen": bool(getattr(sys, "frozen", False)),
+            "webview2_registry": runtime_versions,
+            "packages": {
+                name: (
+                    importlib.metadata.version(name)
+                    if importlib.util.find_spec(module) is not None
+                    else "missing"
+                )
+                for name, module in (
+                    ("pywebview", "webview"),
+                    ("pythonnet", "pythonnet"),
+                    ("clr-loader", "clr_loader"),
+                )
+            },
+        },
+    )
+    # #endregion
+
+    try:
+        import webview  # type: ignore[import-not-found]
+    except Exception:
+        # #region debug-point B:import-failure
+        _report_debug_event(
+            "B",
+            "app.desktop:_open_window",
+            "pywebview import failed",
+            {"traceback": traceback.format_exc()},
+        )
+        # #endregion
+        raise
+
+    window = webview.create_window(
         _APP_NAME,
         url,
         width=1440,
@@ -364,8 +471,54 @@ def _open_window(url: str) -> None:
         # 桌面版固定单窗口, 禁用外部浏览器跳转
         confirm_close=False,
     )
-    # pywebview 会阻塞主线程直到窗口关闭
-    webview.start(debug=False)
+
+    # #region debug-point C-E:window-lifecycle
+    _report_debug_event(
+        "C,E",
+        "app.desktop:_open_window",
+        "window created",
+        {"url": url},
+    )
+
+    def _on_loaded() -> None:
+        try:
+            page = window.evaluate_js(
+                "(() => ({readyState: document.readyState, "
+                "location: location.href, title: document.title, "
+                "bodyTextLength: document.body?.innerText?.length ?? -1, "
+                "htmlLength: document.documentElement?.outerHTML?.length ?? -1}))()"
+            )
+        except Exception:
+            page = {"evaluation_error": traceback.format_exc()}
+        _report_debug_event(
+            "C,D",
+            "app.desktop:_open_window.loaded",
+            "webview loaded event",
+            {"page": page},
+        )
+
+    window.events.loaded += _on_loaded
+    _report_debug_event(
+        "A-E",
+        "app.desktop:_open_window",
+        "entering webview event loop",
+        {"url": url},
+    )
+    # #endregion
+
+    try:
+        # pywebview 会阻塞主线程直到窗口关闭
+        webview.start(debug=False)
+    except Exception:
+        # #region debug-point A-D:start-failure
+        _report_debug_event(
+            "A,B,D",
+            "app.desktop:_open_window",
+            "webview event loop failed",
+            {"traceback": traceback.format_exc()},
+        )
+        # #endregion
+        raise
 
 
 def main() -> int:
