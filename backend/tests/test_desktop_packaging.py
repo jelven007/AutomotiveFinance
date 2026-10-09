@@ -175,6 +175,49 @@ def test_gui_smoke_rejects_invalid_renderer_or_blank_page(
         desktop._validate_gui_smoke_page(renderer, page)
 
 
+def test_gui_smoke_waits_for_react_to_render_after_loaded_event() -> None:
+    blank_page = {
+        "readyState": "complete",
+        "location": "http://127.0.0.1:3018",
+        "bodyTextLength": 0,
+        "htmlLength": 100,
+    }
+    rendered_page = {
+        **blank_page,
+        "bodyTextLength": 42,
+        "htmlLength": 512,
+    }
+    probes = iter([rendered_page])
+
+    page = desktop._wait_for_gui_smoke_page(
+        "edgechromium",
+        lambda: next(probes),
+        initial_page=blank_page,
+        timeout=0.1,
+        poll_interval=0,
+    )
+
+    assert page == rendered_page
+
+
+def test_gui_smoke_rejects_a_page_that_remains_blank() -> None:
+    blank_page = {
+        "readyState": "complete",
+        "location": "http://127.0.0.1:3018",
+        "bodyTextLength": 0,
+        "htmlLength": 100,
+    }
+
+    with pytest.raises(RuntimeError, match="did not render"):
+        desktop._wait_for_gui_smoke_page(
+            "edgechromium",
+            lambda: blank_page,
+            initial_page=blank_page,
+            timeout=0,
+            poll_interval=0,
+        )
+
+
 def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 

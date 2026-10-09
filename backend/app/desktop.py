@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,14 @@ _PORT_PROBE_RANGE = 50  # 从 3018 起最多试 50 个端口
 _SMOKE_TEST_ENV = "TSP_DESKTOP_SMOKE_TEST"
 _GUI_SMOKE_TEST_ENV = "TSP_DESKTOP_GUI_SMOKE_TEST"
 _GUI_SMOKE_TIMEOUT_SECONDS = 90.0
+_GUI_SMOKE_RENDER_TIMEOUT_SECONDS = 30.0
+_GUI_SMOKE_POLL_INTERVAL_SECONDS = 0.5
+_GUI_SMOKE_PAGE_SCRIPT = (
+    "(() => ({readyState: document.readyState, "
+    "location: location.href, title: document.title, "
+    "bodyTextLength: document.body?.innerText?.length ?? -1, "
+    "htmlLength: document.documentElement?.outerHTML?.length ?? -1}))()"
+)
 _MOOTDX_DATASETS = {
     "realtime",
     "daily",
@@ -432,6 +441,43 @@ def _validate_gui_smoke_page(renderer: str, page: object) -> None:
         raise RuntimeError(f"webview body text is empty: {body_text_length!r}")
 
 
+def _wait_for_gui_smoke_page(
+    renderer: str,
+    evaluate_page: Callable[[], object],
+    *,
+    initial_page: object | None = None,
+    timeout: float = _GUI_SMOKE_RENDER_TIMEOUT_SECONDS,
+    poll_interval: float = _GUI_SMOKE_POLL_INTERVAL_SECONDS,
+) -> dict[str, Any]:
+    """Wait for the React application to render after webview navigation."""
+    if renderer.lower() != "edgechromium":
+        raise RuntimeError(f"unexpected pywebview renderer: {renderer or 'missing'}")
+
+    deadline = time.monotonic() + timeout
+    page = initial_page
+    while True:
+        if page is None:
+            try:
+                page = evaluate_page()
+            except Exception as exc:
+                page = {"evaluation_error": f"{type(exc).__name__}: {exc}"}
+
+        try:
+            _validate_gui_smoke_page(renderer, page)
+        except RuntimeError as exc:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"webview DOM did not render within {timeout:.0f}s: {exc}; "
+                    f"last_page={page!r}"
+                ) from exc
+            time.sleep(poll_interval)
+            page = None
+            continue
+
+        assert isinstance(page, dict)
+        return page
+
+
 def _open_window(url: str) -> None:
     """主线程: 用 pywebview 打开桌面窗口。"""
     # #region debug-point A-B:runtime-and-backend
@@ -513,12 +559,7 @@ def _open_window(url: str) -> None:
 
     def _on_loaded() -> None:
         try:
-            page = window.evaluate_js(
-                "(() => ({readyState: document.readyState, "
-                "location: location.href, title: document.title, "
-                "bodyTextLength: document.body?.innerText?.length ?? -1, "
-                "htmlLength: document.documentElement?.outerHTML?.length ?? -1}))()"
-            )
+            page = window.evaluate_js(_GUI_SMOKE_PAGE_SCRIPT)
         except Exception:
             page = {"evaluation_error": traceback.format_exc()}
         _report_debug_event(
@@ -530,7 +571,11 @@ def _open_window(url: str) -> None:
         if gui_smoke_test:
             try:
                 renderer = str(getattr(webview, "renderer", "") or "")
-                _validate_gui_smoke_page(renderer, page)
+                page = _wait_for_gui_smoke_page(
+                    renderer,
+                    lambda: window.evaluate_js(_GUI_SMOKE_PAGE_SCRIPT),
+                    initial_page=page,
+                )
                 logger.info(
                     "DESKTOP_GUI_SMOKE_TEST_OK renderer=%s ready_state=%s "
                     "body_text_length=%s html_length=%s",
