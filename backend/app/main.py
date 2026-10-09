@@ -104,11 +104,13 @@ async def _application_lifespan(app: FastAPI):
         __version__, tf_client.current_mode(),
     )
 
-    # 首次启动可通过环境变量预置注册口令哈希与邮箱账户。
+    # 首次启动可通过环境变量预置注册口令哈希与邮箱账户。冻结桌面版没有
+    # 部署 .env, 在环境变量未配置时使用打包的单向哈希初始化默认注册口令。
     # 仅配置旧 AUTH_PASSWORD 时进入待绑定邮箱的兼容模式。
     try:
         from app.services import auth as auth_service
         auth_service.bootstrap_registration_secret_from_env()
+        auth_service.bootstrap_registration_secret_for_desktop()
         auth_service.bootstrap_from_env()
     except Exception as e:  # noqa: BLE001
         logger.warning("auth bootstrap failed: %s", e)

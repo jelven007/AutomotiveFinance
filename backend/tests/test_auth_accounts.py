@@ -154,6 +154,55 @@ def test_registration_secret_bootstraps_once_from_env(
     assert auth.verify_registration_secret("replacement-secret") is False
 
 
+def test_desktop_bootstrap_persists_only_default_hash_and_preserves_users(
+    isolated_auth_store: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = isolated_auth_store
+    secret = "天王盖地虎"
+    auth.register_user("owner@example.com", "password-123")
+    monkeypatch.setattr(app_config, "_IS_FROZEN", True)
+
+    assert auth.bootstrap_registration_secret_for_desktop() is True
+
+    auth_path = app_config.settings.data_dir / "user_data" / "auth.json"
+    persisted = auth_path.read_text(encoding="utf-8")
+    assert secret not in persisted
+    assert auth.verify_registration_secret(secret) is True
+    assert auth.authenticate_user("owner@example.com", "password-123") is not None
+
+    before = auth_path.read_bytes()
+    assert auth.bootstrap_registration_secret_for_desktop() is False
+    assert auth_path.read_bytes() == before
+
+
+def test_desktop_bootstrap_does_not_override_a_configured_secret(
+    isolated_auth_store: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = isolated_auth_store
+    auth.set_registration_secret("custom-registration-secret")
+    auth_path = app_config.settings.data_dir / "user_data" / "auth.json"
+    before = auth_path.read_bytes()
+    monkeypatch.setattr(app_config, "_IS_FROZEN", True)
+
+    assert auth.bootstrap_registration_secret_for_desktop() is False
+    assert auth_path.read_bytes() == before
+    assert auth.verify_registration_secret("custom-registration-secret") is True
+    assert auth.verify_registration_secret("天王盖地虎") is False
+
+
+def test_desktop_bootstrap_is_disabled_for_server_deployments(
+    isolated_auth_store: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = isolated_auth_store
+    monkeypatch.setattr(app_config, "_IS_FROZEN", False)
+
+    assert auth.bootstrap_registration_secret_for_desktop() is False
+    assert auth.has_registration_secret() is False
+
+
 def test_account_api_register_login_change_password(
     isolated_auth_store: ModuleType,
 ) -> None:

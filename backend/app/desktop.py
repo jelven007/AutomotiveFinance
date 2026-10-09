@@ -402,6 +402,14 @@ def _run_smoke_checks(port: int) -> None:
                 f"OpenAPI check failed: status={response.status}, missing={missing}"
             )
 
+    with urllib.request.urlopen(f"{base_url}/api/auth/status", timeout=10) as response:
+        auth_status = json.loads(response.read())
+        if response.status != 200 or not auth_status.get("registration_enabled"):
+            raise RuntimeError(
+                "desktop registration bootstrap failed: "
+                f"status={response.status}, body={auth_status}"
+            )
+
     from app.data_providers import custom as custom_sources
 
     _validate_smoke_plugins(custom_sources.list_plugins())

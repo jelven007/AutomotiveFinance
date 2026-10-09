@@ -32,6 +32,13 @@ _DUMMY_SALT = b"\0" * _SALT_LEN
 _DUMMY_HASH = hashlib.pbkdf2_hmac(
     "sha256", b"invalid-account", _DUMMY_SALT, _PBKDF2_ITER,
 ).hex()
+# Packaged desktop builds cannot depend on a deployment .env. These constants
+# contain only the one-way PBKDF2 representation of the default registration
+# secret; the plaintext is never shipped or written to auth.json.
+_DESKTOP_REGISTRATION_SECRET_SALT = "d7b9ccb0b1499629460f9f58a9661de7"
+_DESKTOP_REGISTRATION_SECRET_HASH = (
+    "db25f63bb9ebde3c5260c28b023a6290857e486273a3226836134c3e6dd8bd77"
+)
 
 SESSION_TTL = 30 * 24 * 3600
 
@@ -399,6 +406,29 @@ def bootstrap_registration_secret_from_env() -> bool:
     except ValueError as exc:
         logger.warning("registration secret bootstrap skipped: %s", exc)
         return False
+
+
+def bootstrap_registration_secret_for_desktop() -> bool:
+    """Initialize the packaged desktop default without storing plaintext."""
+    from app.config import _IS_FROZEN
+
+    if not _IS_FROZEN:
+        return False
+    with _lock:
+        data = _load()
+        if (
+            data.get("registration_secret_hash")
+            and data.get("registration_secret_salt")
+        ):
+            return False
+        data["schema_version"] = _SCHEMA_VERSION
+        data["registration_secret_hash"] = _DESKTOP_REGISTRATION_SECRET_HASH
+        data["registration_secret_salt"] = _DESKTOP_REGISTRATION_SECRET_SALT
+        data["updated_at"] = int(time.time())
+        data.setdefault("sessions", {})
+        _save(data)
+    logger.info("desktop registration secret hash initialized")
+    return True
 
 
 def bootstrap_from_env() -> bool:

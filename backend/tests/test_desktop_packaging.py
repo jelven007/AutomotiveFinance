@@ -54,6 +54,13 @@ def test_smoke_plugin_validation_accepts_complete_mootdx() -> None:
     )
 
 
+def test_desktop_smoke_requires_registration_bootstrap() -> None:
+    source = (ROOT / "backend" / "app" / "desktop.py").read_text(encoding="utf-8")
+
+    assert 'f"{base_url}/api/auth/status"' in source
+    assert 'auth_status.get("registration_enabled")' in source
+
+
 def test_find_free_port_skips_an_active_listener() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
