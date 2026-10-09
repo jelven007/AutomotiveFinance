@@ -18,7 +18,7 @@ on:
       version:
         description: '版本号 (如 v0.1.33, 用作 Release tag 和标题; 必须与 frontend/package.json 的 version 一致, 否则流水线直接失败)'
         required: true
-        default: 'v0.3.4'
+        default: 'v0.3.5'
       platforms:
         description: '要构建的平台 (逗号分隔: windows,macos,linux)'
         required: true
@@ -66,10 +66,10 @@ jobs:
           import json, sys
           requested = '${{ github.event.inputs.platforms }}'.split(',')
           requested = [r.strip() for r in requested if r.strip()]
-          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.4 → 0.3.4
+          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.5 → 0.3.5
           all_platforms = json.loads('''$ALL''')
           selected = [p for p in all_platforms if p['platform'] in requested]
-          # 产物文件名带版本号 (TSP-Setup-x64-0.3.4.exe): 用户下载后一眼可辨版本
+          # 产物文件名带版本号 (TSP-Setup-x64-0.3.5.exe): 用户下载后一眼可辨版本
           for p in selected:
               stem, _, ext = p['artifact'].rpartition('.')
               p['artifact'] = f'{stem}-{ver}.{ext}'
@@ -407,6 +407,9 @@ jobs:
           name: ${{ github.event.inputs.version }}
           files: ${{ matrix.artifact }}
           prerelease: ${{ github.event.inputs.prerelease }}
+          # 仓库启用了 Immutable Releases。先保持 draft，让所有平台资产及
+          # latest.json 都可上传；manifest job 完成后再一次性发布并冻结。
+          draft: true
           generate_release_notes: true   # 自动从 commit 生成 changelog
           body: |
             ## 桌面客户端 ${{ github.event.inputs.version }}
@@ -466,7 +469,7 @@ jobs:
           rel = json.loads(os.environ["RELEASE_JSON"])
 
           # version 去掉 v 前缀, 与 package.json 语义版本一致
-          # (产物文件名 TSP-Setup-x64-0.3.4.exe 用的就是不带 v 的版本)
+          # (产物文件名 TSP-Setup-x64-0.3.5.exe 用的就是不带 v 的版本)
           version = tag[1:] if tag.startswith("v") else tag
 
           # 资产文件名 → 渠道名 (客户端按渠道取下载地址); 文件名带版本号, 按当前 tag 拼
@@ -507,3 +510,5 @@ jobs:
           EOF
           # --clobber: 同名资产覆盖 (重跑同一版本时更新清单而不是追加 _01 副本)
           gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          # 所有资产齐备后再发布。Immutable Releases 从此刻开始冻结。
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

@@ -73,3 +73,12 @@ def test_windows_smoke_log_checks_use_explicit_powershell_parameters() -> None:
     assert workflow.count(
         "Select-String -Path $desktopLog -Pattern 'DESKTOP_SMOKE_TEST_OK' -Quiet"
     ) == 1
+
+
+def test_release_stays_draft_until_update_manifest_is_uploaded() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "draft: true" in workflow
+    upload = workflow.index('gh release upload "$TAG" latest.json')
+    publish = workflow.index('gh release edit "$TAG"')
+    assert upload < publish

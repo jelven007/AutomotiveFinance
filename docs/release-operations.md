@@ -146,7 +146,7 @@ docker image inspect ghcr.io/shy3130/tick-stock-panel:<commit-sha>
 
 ```bash
 gh workflow run release.yml \
-  -f version=v0.3.4 \
+  -f version=v0.3.5 \
   -f platforms=windows \
   -f prerelease=false
 ```
@@ -161,8 +161,9 @@ Silicon。workflow 会：
 5. 使用 PyInstaller 构建应用。
 6. Windows runner 验证 x64/Windows 10+ 目标约束，运行便携版 EXE 自检。
 7. Windows 安装包执行静默安装、启动自检、静默卸载和用户数据保留验证。
-8. 生成所选平台安装包并上传 GitHub Release。
-9. 汇总 Release 上已存在的目标资产，生成带 SHA-256 的 `latest.json`。
+8. 生成所选平台安装包并上传 Draft Release。
+9. 汇总 Draft Release 上的目标资产，生成带 SHA-256 的 `latest.json`。
+10. 清单上传完成后发布 Release；仓库的 immutable 规则从此刻冻结资产。
 
 允许分批补齐平台，因此单个平台成功不代表所有平台已发布。每次发布后检查：
 
