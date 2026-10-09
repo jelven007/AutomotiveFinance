@@ -241,6 +241,10 @@ def test_release_stays_draft_until_update_manifest_is_uploaded() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
     assert "draft: true" in workflow
+    assert '"url": asset["browser_download_url"]' not in workflow
+    assert 'f"https://github.com/{repo}/releases/download/"' in workflow
+    assert "urllib.parse.quote(tag, safe='')" in workflow
+    assert "urllib.parse.quote(name, safe='')" in workflow
     upload = workflow.index('"name": "latest.json"')
     publish = workflow.index('body={"draft": False}')
     assert upload < publish

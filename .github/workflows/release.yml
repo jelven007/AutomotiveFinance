@@ -18,7 +18,7 @@ on:
       version:
         description: '版本号 (如 v0.1.33, 用作 Release tag 和标题; 必须与 frontend/package.json 的 version 一致, 否则流水线直接失败)'
         required: true
-        default: 'v0.3.7'
+        default: 'v0.3.8'
       platforms:
         description: '要构建的平台 (逗号分隔: windows,macos,linux)'
         required: true
@@ -66,10 +66,10 @@ jobs:
           import json, sys
           requested = '${{ github.event.inputs.platforms }}'.split(',')
           requested = [r.strip() for r in requested if r.strip()]
-          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.7 → 0.3.7
+          ver = '${{ github.event.inputs.version }}'.lstrip('v')  # v0.3.8 → 0.3.8
           all_platforms = json.loads('''$ALL''')
           selected = [p for p in all_platforms if p['platform'] in requested]
-          # 产物文件名带版本号 (TSP-Setup-x64-0.3.7.exe): 用户下载后一眼可辨版本
+          # 产物文件名带版本号 (TSP-Setup-x64-0.3.8.exe): 用户下载后一眼可辨版本
           for p in selected:
               stem, _, ext = p['artifact'].rpartition('.')
               p['artifact'] = f'{stem}-{ver}.{ext}'
@@ -547,9 +547,16 @@ jobs:
               ) as response:
                   while chunk := response.read(1024 * 1024):
                       digest.update(chunk)
+              # Draft Release 的 browser_download_url 使用临时 untagged-* 路径，
+              # 发布为 immutable Release 后会变成 404。清单必须预先生成稳定 tag URL。
+              canonical_download_url = (
+                  f"https://github.com/{repo}/releases/download/"
+                  f"{urllib.parse.quote(tag, safe='')}/"
+                  f"{urllib.parse.quote(name, safe='')}"
+              )
               channels[channel] = {
                   "name": name,
-                  "url": asset["browser_download_url"],
+                  "url": canonical_download_url,
                   "size": asset["size"],
                   "sha256": digest.hexdigest(),
               }

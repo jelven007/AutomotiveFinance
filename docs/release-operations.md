@@ -146,7 +146,7 @@ docker image inspect ghcr.io/shy3130/tick-stock-panel:<commit-sha>
 
 ```bash
 gh workflow run release.yml \
-  -f version=v0.3.7 \
+  -f version=v0.3.8 \
   -f platforms=windows \
   -f prerelease=false
 ```
