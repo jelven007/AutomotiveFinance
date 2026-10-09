@@ -450,65 +450,125 @@ jobs:
           TAG: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p assets && cd assets
-          # 只拉已知的三个安装包 (latest.json 自身等其他资产不进清单);
-          # 产物文件名带版本号, 故用通配匹配当前版本
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'TSP-Setup-x64-*.exe' \
-            --pattern 'TSP-macos-arm64-*.dmg' \
-            --pattern 'TSP-linux-x64-*.tar.gz' \
-            --clobber || true
-          cd ..
-          RELEASE_JSON=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")
-          TAG="$TAG" REPO="$GITHUB_REPOSITORY" RELEASE_JSON="$RELEASE_JSON" python3 - <<'EOF'
-          import hashlib, json, os, sys
-          from pathlib import Path
+          python3 - <<'EOF'
+          import hashlib
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
 
+          repo = os.environ["GITHUB_REPOSITORY"]
           tag = os.environ["TAG"]
-          repo = os.environ["REPO"]
-          rel = json.loads(os.environ["RELEASE_JSON"])
+          token = os.environ["GH_TOKEN"]
+          api = f"https://api.github.com/repos/{repo}"
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "User-Agent": "tsp-release-manifest",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
 
-          # version 去掉 v 前缀, 与 package.json 语义版本一致
-          # (产物文件名 TSP-Setup-x64-0.3.5.exe 用的就是不带 v 的版本)
-          version = tag[1:] if tag.startswith("v") else tag
+          class StripCrossHostAuth(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, *args, **kwargs):
+                  redirected = super().redirect_request(request, *args, **kwargs)
+                  if (
+                      redirected is not None
+                      and urllib.parse.urlparse(request.full_url).netloc
+                      != urllib.parse.urlparse(redirected.full_url).netloc
+                  ):
+                      redirected.remove_header("Authorization")
+                  return redirected
 
-          # 资产文件名 → 渠道名 (客户端按渠道取下载地址); 文件名带版本号, 按当前 tag 拼
-          channels_cfg = {
+          def request_json(url, *, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              request_headers = dict(headers)
+              if data is not None:
+                  request_headers["Content-Type"] = "application/json"
+              request = urllib.request.Request(
+                  url, data=data, headers=request_headers, method=method,
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = response.read()
+              return json.loads(payload) if payload else None
+
+          releases = request_json(f"{api}/releases?per_page=100")
+          release = next((item for item in releases if item["tag_name"] == tag), None)
+          if release is None or not release.get("draft"):
+              raise SystemExit(f"draft release not found for {tag}")
+
+          version = tag.removeprefix("v")
+          channel_names = {
               f"TSP-Setup-x64-{version}.exe": "windows",
               f"TSP-macos-arm64-{version}.dmg": "macos-arm64",
               f"TSP-linux-x64-{version}.tar.gz": "linux-x64",
           }
-          by_name = {a["name"]: a for a in rel.get("assets", [])}
-
+          assets = {asset["name"]: asset for asset in release.get("assets", [])}
           channels = {}
-          for name, channel in channels_cfg.items():
-              local = Path("assets") / name
-              if not local.exists():
-                  continue  # 本次未构建该平台 (分批发布), 清单只列实际存在的
-              sha = hashlib.sha256(local.read_bytes()).hexdigest()
+          for name, channel in channel_names.items():
+              asset = assets.get(name)
+              if asset is None:
+                  continue
+              download_request = urllib.request.Request(
+                  f"{api}/releases/assets/{asset['id']}",
+                  headers={**headers, "Accept": "application/octet-stream"},
+              )
+              digest = hashlib.sha256()
+              with urllib.request.build_opener(StripCrossHostAuth).open(
+                  download_request, timeout=300,
+              ) as response:
+                  while chunk := response.read(1024 * 1024):
+                      digest.update(chunk)
               channels[channel] = {
                   "name": name,
-                  "url": by_name[name]["browser_download_url"],
-                  "size": by_name[name]["size"],
-                  "sha256": sha,
+                  "url": asset["browser_download_url"],
+                  "size": asset["size"],
+                  "sha256": digest.hexdigest(),
               }
 
           if not channels:
-              print("::warning::Release 上没有任何安装包资产, 跳过 latest.json 生成")
-              sys.exit(0)
+              raise SystemExit("draft release has no recognized installer assets")
 
           manifest = {
               "version": version,
               "tag": tag,
-              "released_at": rel.get("published_at") or rel.get("created_at"),
-              "prerelease": bool(rel.get("prerelease")),
+              "released_at": release.get("created_at"),
+              "prerelease": bool(release.get("prerelease")),
               "notes_url": f"https://github.com/{repo}/releases/tag/{tag}",
               "channels": channels,
           }
-          Path("latest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-          print(json.dumps(manifest, indent=2))
-          EOF
-          # --clobber: 同名资产覆盖 (重跑同一版本时更新清单而不是追加 _01 副本)
-          gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          manifest_bytes = json.dumps(
+              manifest, ensure_ascii=False, indent=2,
+          ).encode("utf-8")
+
+          existing = assets.get("latest.json")
+          if existing is not None:
+              request_json(
+                  f"{api}/releases/assets/{existing['id']}", method="DELETE",
+              )
+          upload_url = (
+              f"https://uploads.github.com/repos/{repo}/releases/{release['id']}/assets?"
+              + urllib.parse.urlencode({"name": "latest.json"})
+          )
+          upload_request = urllib.request.Request(
+              upload_url,
+              data=manifest_bytes,
+              headers={
+                  **headers,
+                  "Content-Type": "application/json",
+                  "Content-Length": str(len(manifest_bytes)),
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(upload_request, timeout=60) as response:
+              if response.status != 201:
+                  raise SystemExit(f"latest.json upload failed: HTTP {response.status}")
+
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
           # 所有资产齐备后再发布。Immutable Releases 从此刻开始冻结。
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          request_json(
+              f"{api}/releases/{release['id']}",
+              method="PATCH",
+              body={"draft": False},
+          )
+          EOF

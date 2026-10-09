@@ -79,6 +79,6 @@ def test_release_stays_draft_until_update_manifest_is_uploaded() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
     assert "draft: true" in workflow
-    upload = workflow.index('gh release upload "$TAG" latest.json')
-    publish = workflow.index('gh release edit "$TAG"')
+    upload = workflow.index('"name": "latest.json"')
+    publish = workflow.index('body={"draft": False}')
     assert upload < publish
