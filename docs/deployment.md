@@ -111,8 +111,8 @@ BACKEND_PORT=8000 FRONTEND_PORT=5173 ./dev.sh
 
 ```bash
 cd backend
-uv sync --extra backtest
-uv run uvicorn app.main:app --reload --port 3018
+uv sync --extra backtest --extra rustdx
+uv run --no-sync uvicorn app.main:app --reload --port 3018
 ```
 
 ```bash

@@ -59,6 +59,7 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
     )
     all_capabilities = {str(capability["id"]) for capability in CAPABILITY_REGISTRY}
     mootdx_only = set(mootdx_routes) == all_capabilities
+    rustdx_only = all(route["provider"] == "rustdx" for route in routes.values())
 
     issues: list[dict[str, str]] = []
     if mootdx_routes and not mootdx_only:
@@ -80,7 +81,9 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
     elif issues:
         status = "warning"
 
-    if mootdx_only:
+    if rustdx_only:
+        policy = "rustdx_only"
+    elif mootdx_only:
         policy = "mootdx_only"
     elif mootdx_routes:
         policy = "mixed_with_mootdx"
@@ -95,6 +98,7 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
         "policy": policy,
         "single_source": len(sources) == 1,
         "mootdx_only": mootdx_only,
+        "rustdx_only": rustdx_only,
         "mixed_sources": len(sources) > 1,
         "sources": sources,
         "routes": routes,

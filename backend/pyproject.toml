@@ -42,7 +42,16 @@ dependencies = [
     "Pillow>=10.0",
 ]
 
+[tool.uv.sources]
+tsp-rustdx-native = { path = "native/rustdx_native" }
+
 [project.optional-dependencies]
+# 默认 rustdx 路由所需原生扩展。未安装时明确显示不可用，可手动选择 mootdx。
+# 启用: `uv sync --extra rustdx` (需要 Rust toolchain)
+rustdx = [
+    "tsp-rustdx-native",
+]
+
 # Legacy CPU runtime: install the Polars compatibility kernel on
 # machines without AVX2/FMA support.
 # Enable with: uv sync --extra legacy-cpu

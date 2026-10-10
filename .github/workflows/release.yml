@@ -94,13 +94,18 @@ jobs:
       - name: 设置 Python
         run: uv python install 3.12
 
+      - name: 设置 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+
       - name: 安装后端测试依赖
         working-directory: backend
-        run: uv sync --extra dev --frozen
+        run: uv sync --extra dev --extra rustdx --frozen
 
       - name: 后端全量测试
         working-directory: backend
-        run: uv run pytest tests -q
+        run: uv run --frozen --no-sync pytest tests -q
 
       - name: 安装 pnpm
         uses: pnpm/action-setup@v4
@@ -167,7 +172,12 @@ jobs:
       - name: 设置 Python
         run: uv python install 3.12
 
-      - name: 安装后端依赖 (含 desktop + legacy-cpu, 不含 backtest)
+      - name: 设置 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+
+      - name: 安装后端依赖 (含 desktop + legacy-cpu + rustdx, 不含 backtest)
         working-directory: backend
         # --no-dev 排除 pytest/ruff/mypy; --extra desktop 装 pywebview
         # --extra legacy-cpu 装 polars[rtcompat] 运行时兼容内核:
@@ -175,7 +185,7 @@ jobs:
         #   rtcompat 会在运行时自动探测 CPU 能力 —— 有 AVX2 用 AVX2, 没有则回退,
         #   对新 CPU 性能几乎无损 (Polars 1.x 官方推荐方案)。
         # 不加 --extra backtest, 主包不含 vectorbt/numba/llvmlite
-        run: uv sync --no-dev --extra desktop --extra legacy-cpu
+        run: uv sync --no-dev --extra desktop --extra legacy-cpu --extra rustdx
 
       - name: 安装内置 mootdx 行情依赖
         working-directory: backend
@@ -201,7 +211,7 @@ jobs:
         # SPECPATH 由 spec 文件位置决定 (packaging/tsp.spec → 项目根),
         # 与 cwd 无关, 故 frontend/dist、tiers.yaml 等相对路径仍正确。
         working-directory: backend
-        run: uv run pyinstaller ../packaging/tsp.spec --noconfirm
+        run: uv run --no-sync pyinstaller ../packaging/tsp.spec --noconfirm
 
       - name: 检查 Polars 兼容内核 (仅 Windows)
         if: matrix.platform == 'windows'

@@ -1,0 +1,8 @@
+name: rustdx
+display_name: "rustdx"
+runtime: none
+entry: app.plugins.rustdx.provider:RustdxProvider
+check: app.plugins.rustdx.client:availability
+datasets: [realtime, daily, adj_factor, minute, depth5, financial, full_minute]
+description: "默认通达信数据源，基于 rustdx-complete 原生 Rust 引擎。支持沪深标的、原始日K、除权因子、实时行情、分钟K、五档盘口、历史财务和全量分钟；所有调用共用最多 35 条持久连接，全市场行情每批最多 60 只。"
+install_hint: "rustdx 原生桥接随正式镜像和桌面包安装；源码环境执行 uv sync --extra rustdx --frozen（需要 Rust 编译工具）。"

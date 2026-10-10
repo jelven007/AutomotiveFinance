@@ -381,8 +381,10 @@ class MootdxProvider:
     """Free TDX protocol provider backed by mootdx."""
 
     name = "mootdx"
+    env_prefix = "MOOTDX"
     builtin = True
     minute_history_days = 30
+    enrich_instruments_with_finance = True
 
     def __init__(self, client_factory: Callable[[], MootdxClient] = MootdxClient) -> None:
         self.config = _MootdxConfig()
@@ -411,10 +413,10 @@ class MootdxProvider:
     def _code(symbol: str) -> str:
         return symbol.split(".", 1)[0]
 
-    @staticmethod
-    def _workers(symbol_count: int) -> int:
+    @classmethod
+    def _workers(cls, symbol_count: int) -> int:
         try:
-            configured = int(os.getenv("MOOTDX_WORKERS", "4"))
+            configured = int(os.getenv(f"{cls.env_prefix}_WORKERS", "4"))
         except ValueError:
             configured = 4
         return max(1, min(configured, 8, symbol_count))
@@ -446,7 +448,7 @@ class MootdxProvider:
                     try:
                         market_rows = client.stocks(market)
                     except MootdxError as exc:
-                        logger.warning("mootdx %s 标的列表不可用: %s", exchange, exc)
+                        logger.warning("%s %s 标的列表不可用: %s", self.name, exchange, exc)
                         complete = False
                         continue
                     if not market_rows:
@@ -481,15 +483,15 @@ class MootdxProvider:
                             },
                         })
         except MootdxError as exc:
-            logger.warning("mootdx 标的列表拉取失败: %s", exc)
+            logger.warning("%s 标的列表拉取失败: %s", self.name, exc)
             return []
 
         if not complete:
-            logger.warning("mootdx 沪深标的列表不完整, 保留原维表")
+            logger.warning("%s 沪深标的列表不完整, 保留原维表", self.name)
             return []
         rows = list({row["symbol"]: row for row in rows}.values())
         rows.sort(key=lambda row: row["symbol"])
-        if asset_type == "stock":
+        if asset_type == "stock" and self.enrich_instruments_with_finance:
             snapshots = {row["symbol"]: row for row in self._snapshot_rows(
                 [row["symbol"] for row in rows]
             )}
@@ -530,7 +532,10 @@ class MootdxProvider:
         default_days = 365 if frequency == _DAILY_FREQUENCY else self.minute_history_days
         start_dt = _as_beijing_datetime(start_time) or (end_dt - timedelta(days=default_days))
         try:
-            max_pages = max(1, min(int(os.getenv("MOOTDX_MAX_PAGES", "64")), 80))
+            max_pages = max(
+                1,
+                min(int(os.getenv(f"{self.env_prefix}_MAX_PAGES", "64")), 80),
+            )
         except ValueError:
             max_pages = 64
         records: list[dict] = []
@@ -547,7 +552,7 @@ class MootdxProvider:
             parsed = [_as_beijing_datetime(row.get("datetime")) for row in batch]
             dates = [value for value in parsed if value is not None]
             if not dates or (oldest is not None and min(dates) >= oldest):
-                logger.warning("mootdx %s K线分页未前进或缺少时间字段", symbol)
+                logger.warning("%s %s K线分页未前进或缺少时间字段", self.name, symbol)
                 break
             oldest = min(dates)
             records.extend(batch)
@@ -557,8 +562,9 @@ class MootdxProvider:
                 break
         return records
 
-    @staticmethod
+    @classmethod
     def _daily_frame(
+        cls,
         raw: list[dict],
         symbol: str,
         start_time: datetime | None,
@@ -587,7 +593,7 @@ class MootdxProvider:
         if not rows:
             return pl.DataFrame()
         return (
-            normalize_daily(rows, source="mootdx")
+            normalize_daily(rows, source=cls.name)
             .unique(subset=["symbol", "date"], keep="last")
             .sort(["symbol", "date"])
         )
@@ -624,17 +630,17 @@ class MootdxProvider:
                             frames.append(frame)
                     except MootdxError as exc:
                         failures += 1
-                        logger.warning("mootdx 日K %s 拉取失败: %s", symbol, exc)
+                        logger.warning("%s 日K %s 拉取失败: %s", self.name, symbol, exc)
                     if on_chunk_done:
                         on_chunk_done(index + 1, len(valid))
                     if failures >= 3:
-                        logger.warning("mootdx 日K连续连接/协议失败, 终止本批次")
+                        logger.warning("%s 日K连续连接/协议失败, 终止本批次", self.name)
                         break
                     if len(frames) >= _DAILY_YIELD_SYMBOLS:
                         yield pl.concat(frames, how="diagonal_relaxed")
                         frames.clear()
         except MootdxError as exc:
-            logger.warning("mootdx 日K连接失败: %s", exc)
+            logger.warning("%s 日K连接失败: %s", self.name, exc)
         if frames:
             yield pl.concat(frames, how="diagonal_relaxed")
 
@@ -733,12 +739,12 @@ class MootdxProvider:
                             frames.append(frame)
                     except MootdxError as exc:
                         failures += 1
-                        logger.warning("mootdx 分钟K %s 拉取失败: %s", symbol, exc)
+                        logger.warning("%s 分钟K %s 拉取失败: %s", self.name, symbol, exc)
                     if failures >= 3:
-                        logger.warning("mootdx 分钟K连续连接/协议失败, 终止本批次")
+                        logger.warning("%s 分钟K连续连接/协议失败, 终止本批次", self.name)
                         break
         except MootdxError as exc:
-            logger.warning("mootdx 分钟K连接失败: %s", exc)
+            logger.warning("%s 分钟K连接失败: %s", self.name, exc)
         return frames
 
     def get_minute(
@@ -755,7 +761,7 @@ class MootdxProvider:
             return pl.DataFrame()
         frequency = _MINUTE_FREQUENCIES.get(str(freq).lower())
         if frequency is None:
-            raise ValueError(f"mootdx 不支持分钟周期: {freq}")
+            raise ValueError(f"{self.name} 不支持分钟周期: {freq}")
         workers = self._workers(len(valid))
         partitions = [valid[index::workers] for index in range(workers)]
         frames: list[pl.DataFrame] = []
@@ -766,7 +772,7 @@ class MootdxProvider:
         else:
             with ThreadPoolExecutor(
                 max_workers=workers,
-                thread_name_prefix="mootdx-minute",
+                thread_name_prefix=f"{self.name}-minute",
             ) as pool:
                 futures = [
                     pool.submit(
@@ -823,7 +829,7 @@ class MootdxProvider:
         try:
             rows = self._persistent_quotes(supported, operation="实时行情")
         except MootdxError as exc:
-            logger.warning("mootdx 实时行情连接失败: %s", exc)
+            logger.warning("%s 实时行情连接失败: %s", self.name, exc)
             return []
         supported_set = set(supported)
         for row in rows:
@@ -901,7 +907,7 @@ class MootdxProvider:
         try:
             rows = self._persistent_quotes(supported, operation="五档")
         except MootdxError as exc:
-            logger.warning("mootdx 五档连接失败: %s", exc)
+            logger.warning("%s 五档连接失败: %s", self.name, exc)
             return {}
         supported_set = set(supported)
         for row in rows:
@@ -992,7 +998,11 @@ class MootdxProvider:
                                     and _to_float(row.get("peigujia")) is None
                                     for row in event_rows
                                 ):
-                                    logger.warning("mootdx %s 配股缺少配股价, 跳过因子", symbol)
+                                    logger.warning(
+                                        "%s %s 配股缺少配股价, 跳过因子",
+                                        self.name,
+                                        symbol,
+                                    )
                                     continue
                                 dividend = sum(
                                     _to_float(row.get("fenhong")) or 0 for row in event_rows
@@ -1025,7 +1035,8 @@ class MootdxProvider:
                                     limit = 0.20 if asset_type == "etf" else _price_limit(symbol)
                                     if abs(adjusted_return) > limit + 0.02:
                                         logger.warning(
-                                            "mootdx 除权因子自检剔除 %s %s: %.2f%%",
+                                            "%s 除权因子自检剔除 %s %s: %.2f%%",
+                                            self.name,
                                             symbol,
                                             event_date,
                                             adjusted_return * 100,
@@ -1039,11 +1050,16 @@ class MootdxProvider:
                                     }
                                 )
                     except MootdxError as exc:
-                        logger.warning("mootdx 除权因子 %s 拉取失败: %s", symbol, exc)
+                        logger.warning(
+                            "%s 除权因子 %s 拉取失败: %s",
+                            self.name,
+                            symbol,
+                            exc,
+                        )
                     if on_chunk_done:
                         on_chunk_done(index + 1, len(valid))
         except MootdxError as exc:
-            logger.warning("mootdx 除权因子连接失败: %s", exc)
+            logger.warning("%s 除权因子连接失败: %s", self.name, exc)
         if not output:
             return pl.DataFrame(schema=schema)
         return (
@@ -1064,10 +1080,10 @@ class MootdxProvider:
                 symbols,
                 periods=periods,
                 columns=_HISTORY_COLUMNS,
-                cache_dir=Path(settings.data_dir) / "cache" / "mootdx" / "financial",
+                cache_dir=Path(settings.data_dir) / "cache" / self.name / "financial",
             )
         except MootdxError as exc:
-            logger.warning("mootdx 历史财务不可用: %s", exc)
+            logger.warning("%s 历史财务不可用: %s", self.name, exc)
             rows = []
         if rows:
             with self._history_lock:

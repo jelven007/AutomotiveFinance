@@ -46,19 +46,19 @@ def test_registry_covers_all_routing_fields():
     assert full_minute["field"] == "full_minute_data_provider"
     assert full_minute["tf_tier"] == "expert"
     for cap in CAPABILITY_REGISTRY:
-        assert cap["default"] == "mootdx"
+        assert cap["default"] == "rustdx"
         assert cap["tf_tier"] in ("none", "starter", "pro", "expert")
         assert "follow" not in cap
 
 
-def test_matrix_defaults_all_capabilities_to_mootdx(monkeypatch):
-    """未保存路由偏好时, 七项能力默认由可用的 mootdx 提供。"""
+def test_matrix_defaults_all_capabilities_to_rustdx(monkeypatch):
+    """未保存路由偏好时, 七项能力默认由可用的 rustdx 提供。"""
     datasets = [cap["id"] for cap in CAPABILITY_REGISTRY]
     _fake_sources(
         monkeypatch,
         [{
-            "name": "mootdx",
-            "display_name": "mootdx",
+            "name": "rustdx",
+            "display_name": "rustdx",
             "datasets": datasets,
             "available": True,
             "status": "ok",
@@ -69,7 +69,7 @@ def test_matrix_defaults_all_capabilities_to_mootdx(monkeypatch):
 
     assert len(matrix["capabilities"]) == 7
     for cap in matrix["capabilities"]:
-        assert cap["current"] == cap["effective"] == "mootdx"
+        assert cap["current"] == cap["effective"] == "rustdx"
         assert cap["usable"] is True
 
 

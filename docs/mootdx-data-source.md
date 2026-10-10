@@ -6,7 +6,7 @@ mootdx 作为内置 Python 插件接入现有 Provider、同步服务、Parquet/
 
 ## 安装与启用
 
-1. 项目首次启动时，七项数据能力默认路由到 mootdx。
+1. 项目首次启动时，七项数据能力默认路由到 rustdx；mootdx 保留为可选源。
 2. Docker 镜像已预装依赖；源码环境若显示未就绪，在
    `http://localhost:3011/settings?tab=data-sources` 的 mootdx 卡片点击「安装」。
 3. 已保存过其他路由的存量环境可点击「套用」，或逐项选择 mootdx。七项均应为 mootdx：

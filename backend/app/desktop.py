@@ -363,17 +363,18 @@ def _wait_for_server(
 
 def _validate_smoke_plugins(plugins: list[dict]) -> None:
     """确认默认行情插件在冻结产物内完整可加载。"""
-    mootdx = next((item for item in plugins if item.get("name") == "mootdx"), None)
-    if mootdx is None:
-        raise RuntimeError("mootdx plugin manifest is missing")
-    if not mootdx.get("available"):
-        raise RuntimeError(f"mootdx plugin is unavailable: {mootdx.get('status')}")
-    datasets = set(mootdx.get("datasets") or [])
-    if datasets != _MOOTDX_DATASETS:
-        raise RuntimeError(
-            f"mootdx datasets mismatch: expected={sorted(_MOOTDX_DATASETS)}, "
-            f"actual={sorted(datasets)}"
-        )
+    for name in ("rustdx", "mootdx"):
+        plugin = next((item for item in plugins if item.get("name") == name), None)
+        if plugin is None:
+            raise RuntimeError(f"{name} plugin manifest is missing")
+        if not plugin.get("available"):
+            raise RuntimeError(f"{name} plugin is unavailable: {plugin.get('status')}")
+        datasets = set(plugin.get("datasets") or [])
+        if datasets != _MOOTDX_DATASETS:
+            raise RuntimeError(
+                f"{name} datasets mismatch: expected={sorted(_MOOTDX_DATASETS)}, "
+                f"actual={sorted(datasets)}"
+            )
 
 
 def _run_smoke_checks(port: int) -> None:

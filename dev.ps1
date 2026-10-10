@@ -146,7 +146,7 @@ if (-not (Test-Path Env:BACKEND_EXTRAS)) {
     $BackendExtras = Read-DotEnvValue $EnvFile 'BACKEND_EXTRAS'
 }
 
-$BackendExtraArgs = @()
+$BackendExtraArgs = @('--extra', 'rustdx')
 if (-not [string]::IsNullOrWhiteSpace($BackendExtras)) {
     foreach ($extra in ($BackendExtras -split '\s+' | Where-Object { $_ })) {
         $BackendExtraArgs += '--extra', $extra
@@ -160,7 +160,7 @@ if (-not (Test-Path (Join-Path $BackendDir '.venv')) -or $BackendExtraArgs.Count
         Log-Info 'first run - installing Python deps (1-2 min)...'
     }
     Push-Location $BackendDir
-    try { & uv sync --frozen @BackendExtraArgs } finally { Pop-Location }
+    try { & uv sync --frozen --inexact @BackendExtraArgs } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { Log-Err 'uv sync failed'; exit 1 }
     Log-Ok 'backend deps installed'
 }

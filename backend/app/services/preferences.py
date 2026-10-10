@@ -217,10 +217,10 @@ def get_minute_refresh_interval() -> int:
     )
 
 
-# ===== 数据源选择 (默认 mootdx) =====
+# ===== 数据源选择 (默认 rustdx, 保留已保存的独立路由) =====
 
 _ALLOWED_DATA_PROVIDERS = {"tickflow"}
-_DEFAULT_DATA_PROVIDER = "mootdx"
+_DEFAULT_DATA_PROVIDER = "rustdx"
 DATA_SOURCE_JOB_TIMEOUT_MIN_S = 60
 
 

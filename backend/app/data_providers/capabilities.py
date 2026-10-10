@@ -32,7 +32,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "日K",
         "desc": "历史K线与实时覆写",
         "field": "daily_data_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "none",
     },
     {
@@ -40,7 +40,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "除权因子",
         "desc": "前复权计算基准",
         "field": "adj_factor_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "starter",
         # 独立路由 (曾经的「跟随日K」特殊值已下线: 每个能力单独配置,
         # 复权口径一致性改由未来的一致性警示保障, 不做路由耦合)
@@ -50,7 +50,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "实时行情",
         "desc": "全市场实时快照",
         "field": "realtime_data_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "starter",
     },
     {
@@ -58,7 +58,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "分钟K",
         "desc": "分时图与分钟回测",
         "field": "minute_data_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "pro",
     },
     {
@@ -66,7 +66,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "五档盘口",
         "desc": "连板梯队封单与盘口深度",
         "field": "depth5_data_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "pro",
     },
     {
@@ -74,7 +74,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "财务数据",
         "desc": "财务指标与三大报表",
         "field": "financial_data_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "expert",
     },
     {
@@ -82,7 +82,7 @@ CAPABILITY_REGISTRY: list[dict] = [
         "label": "全量分钟",
         "desc": "盘中全市场当日分钟落盘 (冷启动全天 + 标的池增量)",
         "field": "full_minute_data_provider",
-        "default": "mootdx",
+        "default": "rustdx",
         "tf_tier": "expert",
         # TickFlow 侧需 Expert 档; 插件/自定义源声明 full_minute 数据集即可提供
         # (插件实现 get_intraday_batch / 可选 get_intraday_latest, YAML 仅修复轮)

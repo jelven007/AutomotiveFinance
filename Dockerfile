@@ -41,8 +41,36 @@ RUN if [ "$USE_CN_MIRROR" = "1" ]; then npm config set registry "$NPM_REGISTRY";
     && chmod +x /opt/codex-native \
     && /opt/codex-native --version
 
+# === Stage 1c: rustdx native bridge ===
+# Build once outside the runtime image. The resulting CPython 3.11 wheel is
+# architecture-specific, so Buildx produces it independently for amd64/arm64.
+FROM rust:1.99-slim-bookworm AS rustdx-builder
+ARG USE_CN_MIRROR=1
+ARG PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-dev python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /maturin \
+    && if [ "$USE_CN_MIRROR" = "1" ]; then \
+         /maturin/bin/pip install --no-cache-dir -i "$PYPI_INDEX" "maturin==1.9.6"; \
+       else \
+         /maturin/bin/pip install --no-cache-dir "maturin==1.9.6"; \
+       fi \
+    && if [ "$USE_CN_MIRROR" = "1" ]; then \
+         mkdir -p /root/.cargo; \
+         printf '%s\n' \
+           '[source.crates-io]' \
+           'replace-with = "rsproxy-sparse"' \
+           '[source.rsproxy-sparse]' \
+           'registry = "sparse+https://rsproxy.cn/index/"' \
+           > /root/.cargo/config.toml; \
+       fi
+WORKDIR /build
+COPY backend/native/rustdx_native ./
+RUN /maturin/bin/maturin build --locked --release --interpreter python3 --out /wheels
+
 # === Stage 2: Python 运行时 ===
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 ARG USE_CN_MIRROR=1
 ARG PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG PYPI_FALLBACK=https://mirrors.aliyun.com/pypi/simple
@@ -75,12 +103,16 @@ RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
 # Backend deps
 COPY README.md /README.md
 COPY backend/pyproject.toml backend/uv.lock* ./
+# uv.lock contains the optional local rustdx path source. Keep the source path
+# present during frozen resolution even though the runtime wheel is installed
+# separately below.
+COPY backend/native ./native
 # uv 原生支持同时挂多个 index(主源 + 备用源),会自动在两源中查找,
 # 比逐个重试更稳健 —— 任一源缺包时另一源补位。
 RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
       export UV_DEFAULT_INDEX="$PYPI_INDEX" UV_EXTRA_INDEX_URL="$PYPI_FALLBACK"; \
     fi; \
-    set -- --no-dev; \
+    set -- --no-dev --extra rustdx --no-install-package tsp-rustdx-native; \
     for extra in $BACKEND_EXTRAS; do \
       set -- "$@" --extra "$extra"; \
     done; \
@@ -95,6 +127,11 @@ RUN uv pip install --python /app/.venv/bin/python -r /tmp/mootdx/requirements.tx
     && uv pip install --python /app/.venv/bin/python --no-deps \
        -r /tmp/mootdx/requirements-no-deps.txt \
     && rm -rf /tmp/mootdx
+
+# Install the default rustdx route's wheel built for this target architecture.
+COPY --from=rustdx-builder /wheels /tmp/rustdx-wheels
+RUN uv pip install --python /app/.venv/bin/python /tmp/rustdx-wheels/*.whl \
+    && rm -rf /tmp/rustdx-wheels
 
 # Backend code
 # 注意:Docker 里 WORKDIR=/app, 而 config.py 的 _PROJECT_ROOT 是按开发布局
@@ -128,4 +165,4 @@ ENV TZ=Asia/Shanghai
 EXPOSE 3018
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3018/health/ready', timeout=4)"]
-CMD ["uv", "run", "--frozen", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3018"]
+CMD ["uv", "run", "--frozen", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3018"]

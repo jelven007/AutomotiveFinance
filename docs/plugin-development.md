@@ -12,6 +12,8 @@
 >
 > mootdx 的安装、环境变量、单位校准及覆盖限制见
 > [mootdx 数据源](./mootdx-data-source.md)。
+> rustdx 的原生桥接、35 连接池与独立路由见
+> [rustdx 数据源](./rustdx-data-source.md)。
 
 ## 快速上手
 
@@ -313,6 +315,9 @@ uv run --extra dev python -m ruff check app/plugins/<your_plugin>/ tests/test_<y
 
 ## 现有插件参考
 
+- **`backend/app/plugins/rustdx/`** — 默认 Rust 数据源，覆盖七类核心能力；
+  PyO3 桥接 `rustdx-complete`，进程内最多 35 条连接，独立财务下载与解析。
+  运行要求和数据边界见 [rustdx 数据源](./rustdx-data-source.md)。
 - **`backend/app/plugins/mootdx/`** — Python 插件，无 API Key，覆盖
   `daily/adj_factor/realtime/minute/depth5/financial/full_minute` 七项能力；
   含证券/指数/ETF 路由、单位校准、财务归档解析和 09:25 竞价快照接口。

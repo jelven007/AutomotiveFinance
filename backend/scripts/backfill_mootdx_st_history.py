@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Backfill strict point-in-time ST/*ST history from mootdx TDX F10.
+"""Backfill strict point-in-time ST/*ST history from TDX F10 (rustdx by default).
 
 Run from ``backend/``:
 
@@ -22,6 +22,7 @@ import polars as pl
 
 from app.instrument_history import history_path, load_instrument_history
 from app.plugins.mootdx.client import MootdxClient
+from app.plugins.rustdx.client import RustdxClient
 from app.services.fs_utils import atomic_write_parquet, atomic_write_text
 from app.services.st_history_backfill import (
     RAW_SCHEMA,
@@ -39,14 +40,15 @@ GOVERNED_HISTORY_PATH = GOVERNANCE_DIR / "history_governed.parquet"
 MANIFEST_PATH = GOVERNANCE_DIR / "manifest.json"
 REPORT_PATH = GOVERNANCE_DIR / "report.md"
 _thread_local = threading.local()
-_clients: list[MootdxClient] = []
+_clients: list[MootdxClient | RustdxClient] = []
 _clients_lock = threading.Lock()
+_client_factory = RustdxClient
 
 
-def _client() -> MootdxClient:
+def _client() -> MootdxClient | RustdxClient:
     client = getattr(_thread_local, "client", None)
     if client is None:
-        client = MootdxClient()
+        client = _client_factory()
         client.__enter__()
         _thread_local.client = client
         with _clients_lock:
@@ -91,6 +93,9 @@ def _close_clients() -> None:
         _clients.clear()
     for client in clients:
         client.close()
+    close_shared = getattr(_client_factory, "close_shared", None)
+    if callable(close_shared):
+        close_shared()
 
 
 def _raw_frame(records: dict[str, dict]) -> pl.DataFrame:
@@ -100,9 +105,9 @@ def _raw_frame(records: dict[str, dict]) -> pl.DataFrame:
     )
 
 
-def _checkpoint(records: dict[str, dict]) -> None:
+def _checkpoint(records: dict[str, dict], path: Path = RAW_PATH) -> None:
     GOVERNANCE_DIR.mkdir(parents=True, exist_ok=True)
-    atomic_write_parquet(_raw_frame(records), RAW_PATH)
+    atomic_write_parquet(_raw_frame(records), path)
 
 
 def _coverage(end: date) -> pl.DataFrame:
@@ -125,7 +130,13 @@ def _coverage(end: date) -> pl.DataFrame:
     )
 
 
-def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict:
+def run(*, end: date, workers: int, retries: int, checkpoint_every: int, provider: str = "rustdx") -> dict:
+    global _client_factory
+    if provider not in {"rustdx", "mootdx"}:
+        raise ValueError(f"unsupported F10 provider: {provider}")
+    _client_factory = RustdxClient if provider == "rustdx" else MootdxClient
+    workers = max(1, min(workers, 35))
+    raw_path = RAW_PATH if provider == "mootdx" else GOVERNANCE_DIR / "rustdx_f10_latest.parquet"
     GOVERNANCE_DIR.mkdir(parents=True, exist_ok=True)
     coverage = _coverage(end)
     symbols = coverage["symbol"].cast(pl.String).to_list()
@@ -151,10 +162,10 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
         )
 
     records: dict[str, dict] = {}
-    if RAW_PATH.exists():
+    if raw_path.exists():
         records = {
             str(row["symbol"]): row
-            for row in pl.read_parquet(RAW_PATH).iter_rows(named=True)
+            for row in pl.read_parquet(raw_path).iter_rows(named=True)
             if str(row["symbol"]) in symbols
         }
     for symbol in missing_instruments:
@@ -195,12 +206,12 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
                 records[row["symbol"]] = row
                 completed += 1
                 if completed % max(1, checkpoint_every) == 0:
-                    _checkpoint(records)
+                    _checkpoint(records, raw_path)
                     errors = sum(bool(item.get("error")) for item in records.values())
                     logger.info("F10 progress: %d/%d, errors=%d", completed, len(pending), errors)
     finally:
         _close_clients()
-    _checkpoint(records)
+    _checkpoint(records, raw_path)
 
     event_records: list[dict] = []
     quarantined: set[str] = set()
@@ -228,6 +239,7 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
         quarantined_symbols=quarantined,
         as_of=max(end, date.today()),
         available_at=observed_at,
+        source_prefix=f"{provider}_f10",
     )
 
     existing = load_instrument_history(DATA_DIR)
@@ -259,7 +271,7 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
     manifest = {
         "schema_version": 1,
         "generated_at": observed_at.isoformat(),
-        "provider": "mootdx_f10",
+        "provider": f"{provider}_f10",
         "effective_end": end.isoformat(),
         "symbols_with_daily_data": len(symbols),
         "missing_instrument_count": len(missing_instruments),
@@ -285,7 +297,7 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
         "fetch_errors": fetch_errors,
         "parse_errors": parse_errors,
         "files": {
-            "raw": str(RAW_PATH),
+            "raw": str(raw_path),
             "events": str(EVENTS_PATH),
             "governed_history": str(GOVERNED_HISTORY_PATH),
             "published_history": str(target),
@@ -313,7 +325,7 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
         "",
         "## 规则",
         "",
-        "- 数据源为 mootdx 通达信 F10 最新提示中的特别处理历史。",
+        f"- 数据源为 {provider} 通达信 F10 最新提示中的特别处理历史。",
         "- 按实施日期构造 SCD2 区间, valid_to 为开区间。",
         "- 抓取失败、解析失败、当前目录缺失一律全历史隔离。",
         "- 只治理风险警示时点; 历史简称仍使用当前展示名称。",
@@ -324,7 +336,8 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="回填 mootdx F10 历史 ST/*ST 时点区间")
+    parser = argparse.ArgumentParser(description="回填 TDX F10 历史 ST/*ST 时点区间")
+    parser.add_argument("--provider", choices=("rustdx", "mootdx"), default="rustdx")
     parser.add_argument("--end", type=date.fromisoformat, required=True, help="治理行情截止日")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--retries", type=int, default=3)
@@ -340,6 +353,7 @@ def main() -> None:
         workers=args.workers,
         retries=args.retries,
         checkpoint_every=args.checkpoint_every,
+        provider=args.provider,
     )
     logger.info("ST governance complete: %s", json.dumps(manifest, ensure_ascii=False))
 

@@ -282,6 +282,16 @@ def test_provider_audit_distinguishes_mootdx_only_and_mixed(
     assert audit["policy"] == "mixed_with_mootdx"
     assert audit["issues"][0]["code"] == "mootdx_mixed_sources"
 
+    monkeypatch.setattr(
+        provider_audit, "current_provider_routes",
+        lambda: {field: "rustdx" for field in all_mootdx},
+    )
+    audit = provider_audit.audit_provider_routes(tickflow_tier="none")
+    assert audit["status"] == "ok"
+    assert audit["policy"] == "rustdx_only"
+    assert audit["rustdx_only"] is True
+    assert audit["mootdx_only"] is False
+
 
 def test_strategy_hash_changes_with_source_content(tmp_path) -> None:
     path = tmp_path / "traceable.py"

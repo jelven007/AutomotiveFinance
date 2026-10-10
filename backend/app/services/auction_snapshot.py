@@ -239,12 +239,12 @@ def capture_auction_snapshot(
             return {**universe_meta, "trade_date": day.isoformat()}
 
         provider_name = preferences.get_realtime_data_provider()
-        if provider_name != "mootdx" or not custom_sources.is_custom_provider(provider_name):
+        if not custom_sources.is_custom_provider(provider_name):
             return {
                 "state": "source_unavailable",
                 "trade_date": day.isoformat(),
                 "provider": provider_name,
-                "message": "9:25 全市场竞价采集要求实时行情路由为 mootdx",
+                "message": "9:25 全市场竞价采集要求实时行情路由提供竞价快照能力",
             }
         provider = custom_sources.get_provider(provider_name)
         fetch = getattr(provider, "get_auction_snapshot", None)
@@ -253,7 +253,7 @@ def capture_auction_snapshot(
                 "state": "source_unavailable",
                 "trade_date": day.isoformat(),
                 "provider": provider_name,
-                "message": "当前 mootdx Provider 未提供竞价快照能力",
+                "message": f"当前 {provider_name} Provider 未提供竞价快照能力",
             }
 
         symbols = universe["symbol"].to_list()

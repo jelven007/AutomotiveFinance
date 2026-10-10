@@ -193,7 +193,7 @@ export function Data() {
     queryFn: api.dataSources,
     staleTime: 60_000,
   })
-  const activeProvider = prefs.data?.daily_data_provider || 'mootdx'
+  const activeProvider = prefs.data?.daily_data_provider || 'rustdx'
   const activeDataSourceName = activeProvider === 'tickflow'
     ? 'TickFlow'
     : (findDataSource(dataSources.data, activeProvider)?.display_name || activeProvider)

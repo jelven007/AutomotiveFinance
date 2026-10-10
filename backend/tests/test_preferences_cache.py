@@ -91,12 +91,12 @@ def test_load_returns_copy_not_cached_object(_isolated):
         ("financial_data_provider", preferences.get_financial_provider),
     ],
 )
-def test_data_provider_defaults_to_mootdx_but_preserves_explicit_choice(
+def test_data_provider_defaults_to_rustdx_but_preserves_explicit_choice(
     _isolated,
     field,
     getter,
 ):
-    assert getter() == "mootdx"
+    assert getter() == "rustdx"
 
     preferences.save({field: "tickflow"})
 

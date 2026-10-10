@@ -57,7 +57,7 @@ if [[ -z "${BACKEND_EXTRAS+x}" && -f "$ROOT/.env" ]]; then
   BACKEND_EXTRAS="$(read_dotenv_value BACKEND_EXTRAS)"
 fi
 BACKEND_EXTRAS="${BACKEND_EXTRAS:-}"
-BACKEND_EXTRA_ARGS=()
+BACKEND_EXTRA_ARGS=(--extra rustdx)
 if [[ -n "$BACKEND_EXTRAS" ]]; then
   read -r -a backend_extras <<< "$BACKEND_EXTRAS"
   for extra in "${backend_extras[@]}"; do
@@ -129,7 +129,7 @@ if [ ! -d "$BACKEND_DIR/.venv" ] || [ "${#BACKEND_EXTRA_ARGS[@]}" -gt 0 ]; then
   fi
   # macOS 自带 bash 3.2 在 set -u 下展开空数组会报 unbound variable,
   # ${arr[@]+"${arr[@]}"} 守卫:数组为空时展开为零个参数,非空时逐个带引号展开。
-  ( cd "$BACKEND_DIR" && uv sync --frozen ${BACKEND_EXTRA_ARGS[@]+"${BACKEND_EXTRA_ARGS[@]}"} )
+  ( cd "$BACKEND_DIR" && uv sync --frozen --inexact ${BACKEND_EXTRA_ARGS[@]+"${BACKEND_EXTRA_ARGS[@]}"} )
   ok "后端依赖装好了"
 fi
 

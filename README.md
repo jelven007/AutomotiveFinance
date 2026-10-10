@@ -13,7 +13,7 @@
 
 TSP 是持续维护的专用版本，当前重点是：
 
-- 使用 `mootdx` 等可配置 Provider 建立统一的沪深行情数据层。
+- 默认使用 `rustdx` 建立沪深行情数据层，保留 mootdx 等可选 Provider。
 - 将选股、信号、因子、回测、监控和复盘统一到同一份标准化数据口径。
 - 对策略结果提供可追溯的配置、数据版本、费用和风险指标。
 - 同时支持本地桌面运行和服务端部署，并明确区分两种环境的认证边界。
@@ -112,7 +112,8 @@ Copy-Item .env.example .env
 4. 在“策略”和“回测”页面验证策略结果及费用口径。
 5. 按需配置 AI、监控通知、Open API Token 和 MCP。
 
-全新安装的七项基础数据能力默认路由到 `mootdx`。数据源实际可用性受公开服务器、
+全新安装的七项基础数据能力默认路由到 `rustdx`，全市场请求最多共用 35 个连接，
+已保存的路由保持原值。数据源实际可用性受公开服务器、
 网络和协议覆盖影响，系统不会在失败时静默切换到其他数据源。
 
 ## 关键配置
@@ -193,8 +194,8 @@ EXT_INDUSTRY_DATA_URL=
 
 ```bash
 cd backend
-uv sync --extra backtest
-uv run pytest
+uv sync --extra backtest --extra rustdx
+uv run --no-sync pytest
 ```
 
 前端：
@@ -227,6 +228,7 @@ git diff --check
 | [发布流程](./docs/release-operations.md) | 版本、产物、上线和回滚 |
 | [二次开发](./docs/secondary-development.md) | 扩展点和核心修改规则 |
 | [mootdx 数据源](./docs/mootdx-data-source.md) | 数据能力、限制和验证 |
+| [rustdx 数据源](./docs/rustdx-data-source.md) | 默认路由、35 连接池和历史财务 |
 | [策略开发](./docs/strategy.md) | 内置、自定义和 AI 策略 |
 | [MCP 服务器](./mcp-server/README.md) | AI 客户端接入 |
 

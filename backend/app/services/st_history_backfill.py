@@ -1,4 +1,4 @@
-"""Backfill point-in-time ST/*ST intervals from mootdx TDX F10 data."""
+"""Backfill point-in-time ST/*ST intervals from TDX F10 data."""
 
 from __future__ import annotations
 
@@ -129,6 +129,7 @@ def build_governed_history(
     quarantined_symbols: set[str],
     as_of: date,
     available_at: datetime | str | None = None,
+    source_prefix: str = "mootdx_f10",
 ) -> pl.DataFrame:
     """Build SCD2 status intervals covering every symbol with daily data.
 
@@ -167,7 +168,7 @@ def build_governed_history(
         current_name = names.get(symbol, "")
         current_risk = "ST" in current_name.upper()
         if symbol in quarantined_symbols:
-            states = [(first_date, True, "mootdx_f10_unknown_quarantine")]
+            states = [(first_date, True, f"{source_prefix}_unknown_quarantine")]
         else:
             state = False
             for event in by_symbol.get(symbol, []):
@@ -175,7 +176,7 @@ def build_governed_history(
                     break
                 if event["is_risk_warning_after"] is not None:
                     state = bool(event["is_risk_warning_after"])
-            states = [(first_date, state, "mootdx_f10_backfill")]
+            states = [(first_date, state, f"{source_prefix}_backfill")]
             for event in by_symbol.get(symbol, []):
                 effective = event["effective_date"]
                 next_state = event["is_risk_warning_after"]
@@ -183,9 +184,10 @@ def build_governed_history(
                     continue
                 next_state = bool(next_state)
                 if next_state != states[-1][1]:
-                    states.append((effective, next_state, "mootdx_f10_backfill"))
+                    states.append((effective, next_state, f"{source_prefix}_backfill"))
             if states[-1][1] != current_risk:
-                states.append((as_of, current_risk, "mootdx_snapshot_reconcile"))
+                snapshot_prefix = source_prefix.removesuffix("_f10")
+                states.append((as_of, current_risk, f"{snapshot_prefix}_snapshot_reconcile"))
 
         for index, (valid_from, risk, source) in enumerate(states):
             valid_to = states[index + 1][0] if index + 1 < len(states) else None

@@ -31,11 +31,19 @@ jobs:
       - name: 设置 Python
         run: uv python install 3.12
 
-      - name: 安装依赖 (含 dev 测试链)
-        run: uv sync --extra dev --frozen
+      - name: 设置 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+
+      - name: 安装依赖 (含 dev 测试链与 rustdx)
+        run: uv sync --extra dev --extra rustdx --frozen
+
+      - name: 检查 rustdx 原生桥接
+        run: cargo test --locked --manifest-path native/rustdx_native/Cargo.toml
 
       - name: 后端全量测试
-        run: uv run pytest tests -q
+        run: uv run --frozen --no-sync pytest tests -q
 
   frontend:
     runs-on: ubuntu-latest

@@ -1,0 +1,15 @@
+[package]
+name = "tsp-rustdx-native"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "tsp_rustdx_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.25" }
+rustdx-complete = "=1.11.0"
+serde = "1"
+serde_json = "1"

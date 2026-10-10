@@ -42,14 +42,14 @@ class _FakeWindow:
         self.destroyed = True
 
 
-def test_smoke_plugin_validation_accepts_complete_mootdx() -> None:
+def test_smoke_plugin_validation_accepts_both_built_in_tdx_providers() -> None:
     desktop._validate_smoke_plugins(
         [
             {
-                "name": "mootdx",
+                "name": name,
                 "available": True,
                 "datasets": sorted(desktop._MOOTDX_DATASETS),
-            }
+            } for name in ("rustdx", "mootdx")
         ]
     )
 
@@ -83,7 +83,10 @@ def test_find_free_port_skips_an_active_listener() -> None:
 )
 def test_smoke_plugin_validation_rejects_incomplete_mootdx(plugin: dict | None) -> None:
     with pytest.raises(RuntimeError, match="mootdx"):
-        desktop._validate_smoke_plugins([] if plugin is None else [plugin])
+        desktop._validate_smoke_plugins(
+            [{"name": "rustdx", "available": True, "datasets": sorted(desktop._MOOTDX_DATASETS)}]
+            + ([] if plugin is None else [plugin])
+        )
 
 
 def test_windows_installer_contract() -> None:
@@ -103,9 +106,10 @@ def test_windows_installer_contract() -> None:
 def test_pyinstaller_collects_default_data_provider() -> None:
     spec = (ROOT / "packaging" / "tsp.spec").read_text(encoding="utf-8")
 
-    assert '"mootdx", "tdxpy"' in spec
-    assert 'BUILTIN_PLUGINS.glob("*/plugin.yaml")' in spec
     assert '"mootdx", "tdxpy",' in spec
+    assert '"tsp_rustdx_native",' in spec
+    assert 'BUILTIN_PLUGINS.glob("*/plugin.yaml")' in spec
+    assert '"tsp-rustdx-native",' in spec
     assert '"pywebview", "pythonnet", "clr-loader",' in spec
 
 

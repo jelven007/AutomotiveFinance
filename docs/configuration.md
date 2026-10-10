@@ -12,7 +12,7 @@
 TICKFLOW_API_KEY=              # 留空 = None 模式(历史日K免费);填 Key = 按订阅档位解锁
 ```
 
-项目首次启动时七项数据能力默认路由到 `mootdx`;同时支持切换到 TickFlow、
+项目首次启动时七项数据能力默认路由到 `rustdx`;保留已有保存路由，同时支持切换到 mootdx、TickFlow、
 fuyao 或自定义数据源(YAML 声明自有接口见
 [custom-data-source.md](./custom-data-source.md),插件开发见
 [plugin-development.md](./plugin-development.md))。
@@ -22,6 +22,9 @@ fuyao 或自定义数据源(YAML 声明自有接口见
 缺少依赖时可在数据源卡片安装。公开通达信服务器可能限流或不可达，安装、
 环境变量、单位校准、竞价采集及覆盖边界见
 [mootdx 数据源](./mootdx-data-source.md)。
+仓库默认的 `rustdx` 插件使用原生 Rust 协议引擎，七类能力共用最多
+35 条持久连接，历史财务也通过 rustdx 下载并独立解析。安装、连接池和
+能力限制见 [rustdx 数据源](./rustdx-data-source.md)。
 选择任一非 TickFlow 源后，请求失败不会静默切回 TickFlow。
 
 - **留空(None 模式)**:通过 free-api 使用历史日 K(当日数据盘后 1-2 小时可用),**无需付费**即可体验核心选股/回测功能

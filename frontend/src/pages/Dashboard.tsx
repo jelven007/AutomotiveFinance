@@ -73,14 +73,14 @@ export function Dashboard() {
   const sealedReady = !!data?.limit?.sealed_ready
   const isSealedDegrade = !hasDepth || !sealedReady
   // 空态引导文案按当前数据源分流: TickFlow 源提"免费服务器", 其他源提"当前数据源",
-  // TickFlow 的档位文案仅在其被显式选中时出现, 默认 mootdx 不展示订阅提示。
+  // TickFlow 的档位文案仅在其被显式选中时出现, 默认 rustdx 不展示订阅提示。
   const prefs = usePreferences()
   const dataSourceList = useQuery({
     queryKey: QK.dataSources,
     queryFn: api.dataSources,
     staleTime: 60_000,
   })
-  const activeProvider = prefs.data?.daily_data_provider || 'mootdx'
+  const activeProvider = prefs.data?.daily_data_provider || 'rustdx'
   const isTickflowProvider = activeProvider === 'tickflow'
   const providerLabel = [
     ...(dataSourceList.data?.builtin ?? []),

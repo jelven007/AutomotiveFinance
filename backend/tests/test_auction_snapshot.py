@@ -91,8 +91,12 @@ def _seed(data_dir, *, as_of: date = DAY) -> None:
     }).write_parquet(daily)
 
 
-def _capture(monkeypatch, tmp_path, provider: _Provider) -> dict:
-    monkeypatch.setattr(auction_snapshot.preferences, "get_realtime_data_provider", lambda: "mootdx")
+def _capture(monkeypatch, tmp_path, provider: _Provider, provider_name: str = "mootdx") -> dict:
+    monkeypatch.setattr(
+        auction_snapshot.preferences,
+        "get_realtime_data_provider",
+        lambda: provider_name,
+    )
     monkeypatch.setattr(auction_snapshot.custom_sources, "is_custom_provider", lambda name: True)
     monkeypatch.setattr(auction_snapshot.custom_sources, "get_provider", lambda name: provider)
     monkeypatch.setattr(auction_snapshot.trading_day, "is_trading_day", lambda now: True)
@@ -124,6 +128,15 @@ def test_capture_uses_fresh_active_catalog_and_publishes_atomically(tmp_path, mo
     assert payload["state"] == "ready"
     assert payload["available_dates"] == [DAY.isoformat()]
     assert [row["symbol"] for row in payload["rows"]] == ["600000.SH", "000001.SZ"]
+
+
+def test_capture_accepts_rustdx_auction_capability(tmp_path, monkeypatch):
+    _seed(tmp_path)
+
+    result = _capture(monkeypatch, tmp_path, _Provider(), provider_name="rustdx")
+
+    assert result["state"] == "ready"
+    assert result["provider"] == "rustdx"
 
 
 def test_capture_rejects_stale_catalog_without_network_request(tmp_path, monkeypatch):

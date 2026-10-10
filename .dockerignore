@@ -26,6 +26,7 @@ backend/app/static
 **/.ruff_cache
 **/.venv
 **/venv
+**/target
 
 # ===== IDE / 系统 =====
 .idea

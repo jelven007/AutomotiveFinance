@@ -29,8 +29,12 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.12
-      - run: uv sync --extra dev --frozen
-      - run: uv run pytest tests -q
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+      - run: uv sync --extra dev --extra rustdx --frozen
+      - run: cargo test --locked --manifest-path native/rustdx_native/Cargo.toml
+      - run: uv run --frozen --no-sync pytest tests -q
 
   frontend-quality:
     if: github.event_name != 'workflow_run'

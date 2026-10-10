@@ -129,6 +129,19 @@ def test_build_governed_history_tracks_events_and_quarantines_unknowns() -> None
     assert quarantined["is_risk_warning"] is True
     assert quarantined["source"] == "mootdx_f10_unknown_quarantine"
 
+    rustdx_history = build_governed_history(
+        instruments, coverage, events,
+        successful_symbols={"000001.SZ", "000002.SZ"},
+        quarantined_symbols={"000003.SZ"},
+        as_of=date(2026, 10, 8),
+        available_at="2026-10-08T04:00:00+00:00",
+        source_prefix="rustdx_f10",
+    )
+    assert rustdx_history.drop("source").equals(history.drop("source"))
+    assert set(rustdx_history["source"].to_list()) == {
+        "rustdx_f10_backfill", "rustdx_f10_unknown_quarantine",
+    }
+
 
 def test_zigzag_only_returns_reversal_confirmed_pivots() -> None:
     values = pl.Series([100.0, 120.0, 105.0, 140.0, 130.0]).to_numpy()
