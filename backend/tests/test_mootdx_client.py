@@ -39,14 +39,26 @@ def test_explicit_exchange_routes_stock_and_index_bars(monkeypatch):
 
 def test_mootdx_config_seed_is_deterministic_and_private(tmp_path):
     path = tmp_path / ".mootdx" / "config.json"
-    _ensure_mootdx_config(_DEFAULT_SERVER, config_path=path)
+    template = {
+        "SERVER": {"HQ": [], "EX": [], "GP": []},
+        "BESTIP": {"HQ": "", "EX": "", "GP": ""},
+    }
+    _ensure_mootdx_config(
+        _DEFAULT_SERVER,
+        config_path=path,
+        config_template=template,
+    )
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["BESTIP"]["HQ"] == list(_DEFAULT_SERVER)
     assert path.stat().st_mode & 0o777 == 0o600
 
     path.write_text('{"preserved": true}\n', encoding="utf-8")
-    _ensure_mootdx_config(("127.0.0.1", 7709), config_path=path)
+    _ensure_mootdx_config(
+        ("127.0.0.1", 7709),
+        config_path=path,
+        config_template=template,
+    )
     assert json.loads(path.read_text(encoding="utf-8")) == {"preserved": True}
 
 

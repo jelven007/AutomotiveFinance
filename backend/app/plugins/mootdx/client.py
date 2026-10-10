@@ -69,16 +69,22 @@ def _ensure_mootdx_config(
     server: tuple[str, int],
     *,
     config_path: Path | None = None,
+    config_template: dict[str, Any] | None = None,
 ) -> None:
     """Seed mootdx config so worker threads never invoke its async bestip scan."""
     try:
-        from mootdx.consts import CONFIG
-        from mootdx.utils import get_config_path
+        if config_template is None:
+            from mootdx.consts import CONFIG
 
-        path = config_path or Path(get_config_path("config.json"))
+            config_template = CONFIG
+        if config_path is None:
+            from mootdx.utils import get_config_path
+
+            config_path = Path(get_config_path("config.json"))
+        path = config_path
         if path.exists():
             return
-        payload = json.loads(json.dumps(CONFIG))
+        payload = json.loads(json.dumps(config_template))
         payload.setdefault("BESTIP", {})["HQ"] = list(server)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
