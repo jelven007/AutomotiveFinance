@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import importlib.metadata
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -62,6 +63,36 @@ def _timeout_from_env() -> int:
         return max(2, min(int(os.getenv("MOOTDX_TIMEOUT", "8")), 60))
     except ValueError:
         return 8
+
+
+def _ensure_mootdx_config(
+    server: tuple[str, int],
+    *,
+    config_path: Path | None = None,
+) -> None:
+    """Seed mootdx config so worker threads never invoke its async bestip scan."""
+    try:
+        from mootdx.consts import CONFIG
+        from mootdx.utils import get_config_path
+
+        path = config_path or Path(get_config_path("config.json"))
+        if path.exists():
+            return
+        payload = json.loads(json.dumps(CONFIG))
+        payload.setdefault("BESTIP", {})["HQ"] = list(server)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.chmod(0o600)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except (ImportError, OSError, TypeError, ValueError) as exc:
+        logger.debug("mootdx config seed skipped: %s", exc)
 
 
 def _records(data: Any) -> list[dict]:
@@ -167,6 +198,7 @@ class MootdxClient:
             if self.server is not None:
                 kwargs["server"] = self.server
             with _CONNECT_LOCK:
+                _ensure_mootdx_config(self.server or _DEFAULT_SERVER)
                 self._quotes = Quotes.factory(**kwargs)
             if self._is_closed():
                 raise MootdxError("通达信行情服务器连接失败")
