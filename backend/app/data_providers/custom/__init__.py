@@ -1,5 +1,6 @@
 """Custom data source extension points."""
 from app.data_providers.custom.loader import (
+    close_all,
     create_provider,
     data_sources_dir,
     delete_config,
@@ -21,6 +22,7 @@ from app.data_providers.custom.loader import (
 )
 
 __all__ = [
+    "close_all",
     "create_provider",
     "data_sources_dir",
     "delete_config",

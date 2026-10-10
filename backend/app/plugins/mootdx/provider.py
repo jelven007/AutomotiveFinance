@@ -18,7 +18,13 @@ from zoneinfo import ZoneInfo
 import polars as pl
 
 from app.config import settings
-from app.data_providers.instrument_status import is_delisted_name, normalize_instrument_name
+from app.data_providers.instrument_status import (
+    SH_A_SHARE_PREFIXES,
+    SZ_A_SHARE_PREFIXES,
+    current_a_share_identity,
+    is_delisted_name,
+    normalize_instrument_name,
+)
 from app.data_providers.normalizer import normalize_daily
 from app.market_time import cn_now
 from app.plugins.mootdx.client import MootdxClient, MootdxError
@@ -40,12 +46,11 @@ _PAGE_SIZE = 800
 _QUOTE_BATCH = 80
 _DAILY_YIELD_SYMBOLS = 20
 _FINANCIAL_HISTORY_PERIODS = 8
-_BJ_TDX_MARKET = 2
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _MINUTE_COLUMNS = ["symbol", "datetime", "open", "high", "low", "close", "volume", "amount"]
 
-_SH_STOCK_PREFIXES = ("600", "601", "603", "605", "688", "689")
-_SZ_STOCK_PREFIXES = ("000", "001", "002", "003", "300", "301")
+_SH_STOCK_PREFIXES = SH_A_SHARE_PREFIXES
+_SZ_STOCK_PREFIXES = SZ_A_SHARE_PREFIXES
 _BJ_STOCK_PREFIXES = ("4", "8", "92")
 
 # FINVALUE IDs, not Chinese labels: upstream repeats labels for single-quarter
@@ -192,15 +197,6 @@ def _symbol(code: str, exchange: str | None = None) -> str | None:
     return None
 
 
-def _is_a_share(code: str, exchange: str) -> bool:
-    prefixes = {
-        "SH": _SH_STOCK_PREFIXES,
-        "SZ": _SZ_STOCK_PREFIXES,
-        "BJ": _BJ_STOCK_PREFIXES,
-    }[exchange]
-    return len(code) == 6 and code.isdigit() and code.startswith(prefixes)
-
-
 def _ref_price(
     prev_close: float,
     dividend: float,
@@ -247,6 +243,140 @@ def _preview(provider: str, dataset: str, frame: pl.DataFrame) -> dict:
     return result
 
 
+def _quote_connection_count() -> int:
+    try:
+        configured = int(os.getenv("MOOTDX_QUOTE_CONNECTIONS", "35"))
+    except ValueError:
+        configured = 35
+    return max(1, min(configured, 64))
+
+
+class _PersistentQuoteWorker:
+    """Own one socket client and never share it with another pool worker."""
+
+    def __init__(self, client_factory: Callable[[], MootdxClient]) -> None:
+        self._client_factory = client_factory
+        self._client: MootdxClient | None = None
+
+    def _discard_client(self) -> None:
+        client, self._client = self._client, None
+        if client is None:
+            return
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.debug("mootdx 行情连接关闭失败", exc_info=True)
+
+    def _quotes(self, symbols: list[str]) -> list[dict]:
+        for attempt in range(2):
+            if self._client is None:
+                self._client = self._client_factory()
+            try:
+                return self._client.quotes(symbols)
+            except MootdxError:
+                self._discard_client()
+                if attempt:
+                    raise
+        return []
+
+    def fetch(
+        self,
+        batches: list[tuple[int, list[str]]],
+    ) -> tuple[dict[int, list[dict]], list[tuple[int, MootdxError]]]:
+        rows: dict[int, list[dict]] = {}
+        errors: list[tuple[int, MootdxError]] = []
+        for batch_index, symbols in batches:
+            try:
+                rows[batch_index] = self._quotes(symbols)
+            except MootdxError as exc:
+                errors.append((batch_index, exc))
+        return rows, errors
+
+    def close(self) -> None:
+        self._discard_client()
+
+
+class _PersistentQuotePool:
+    """Run one non-overlapping quote cycle across persistent socket owners."""
+
+    def __init__(
+        self,
+        client_factory: Callable[[], MootdxClient],
+        *,
+        size: int,
+    ) -> None:
+        self._workers = [
+            _PersistentQuoteWorker(client_factory)
+            for _ in range(size)
+        ]
+        self._executor = ThreadPoolExecutor(
+            max_workers=size,
+            thread_name_prefix="mootdx-quote",
+        )
+        self._cycle_lock = threading.Lock()
+        self._closed = False
+
+    def quotes(self, symbols: list[str], *, operation: str) -> list[dict]:
+        batches = [
+            symbols[start : start + _QUOTE_BATCH]
+            for start in range(0, len(symbols), _QUOTE_BATCH)
+        ]
+        if not batches:
+            return []
+
+        with self._cycle_lock:
+            if self._closed:
+                raise MootdxError("mootdx 行情连接池已关闭")
+            active_count = min(len(self._workers), len(batches))
+            assignments: list[list[tuple[int, list[str]]]] = [
+                [] for _ in range(active_count)
+            ]
+            for batch_index, batch in enumerate(batches):
+                assignments[batch_index % active_count].append((batch_index, batch))
+
+            futures = {
+                self._executor.submit(self._workers[index].fetch, assigned): assigned
+                for index, assigned in enumerate(assignments)
+            }
+            completed: dict[int, list[dict]] = {}
+            failures: list[tuple[int, Exception]] = []
+            for future in as_completed(futures):
+                try:
+                    rows, errors = future.result()
+                    completed.update(rows)
+                    failures.extend(errors)
+                except Exception as exc:
+                    failures.extend(
+                        (batch_index, exc)
+                        for batch_index, _symbols in futures[future]
+                    )
+
+            for batch_index, exc in sorted(failures, key=lambda item: item[0]):
+                logger.warning(
+                    "mootdx %s批次 %d/%d 失败: %s",
+                    operation,
+                    batch_index + 1,
+                    len(batches),
+                    exc,
+                )
+            return [
+                row
+                for batch_index in range(len(batches))
+                for row in completed.get(batch_index, [])
+            ]
+
+    def close(self) -> None:
+        with self._cycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            for worker in self._workers:
+                worker.close()
+
+
 class MootdxProvider:
     """Free TDX protocol provider backed by mootdx."""
 
@@ -264,8 +394,14 @@ class MootdxProvider:
         self._finance_lock = threading.Lock()
         self._history_cache: dict[tuple[tuple[str, ...], int], tuple[float, list[dict]]] = {}
         self._history_lock = threading.Lock()
+        self._quote_pool: _PersistentQuotePool | None = None
+        self._quote_pool_lock = threading.Lock()
 
     def close(self) -> None:
+        with self._quote_pool_lock:
+            quote_pool, self._quote_pool = self._quote_pool, None
+        if quote_pool is not None:
+            quote_pool.close()
         self._instrument_cache = {}
         self._instrument_cache_date = None
         self._finance_cache.clear()
@@ -283,6 +419,16 @@ class MootdxProvider:
             configured = 4
         return max(1, min(configured, 8, symbol_count))
 
+    def _persistent_quotes(self, symbols: list[str], *, operation: str) -> list[dict]:
+        with self._quote_pool_lock:
+            if self._quote_pool is None:
+                self._quote_pool = _PersistentQuotePool(
+                    self._client_factory,
+                    size=_quote_connection_count(),
+                )
+            quote_pool = self._quote_pool
+        return quote_pool.quotes(symbols, operation=operation)
+
     # ---- instruments ----
     def get_instruments(self, asset_type: str = "stock") -> list[dict]:
         if asset_type not in {"stock", "index", "etf"}:
@@ -296,26 +442,29 @@ class MootdxProvider:
         complete = True
         try:
             with self._client_factory() as client:
-                for market, exchange in ((0, "SZ"), (1, "SH"), (_BJ_TDX_MARKET, "BJ")):
+                for market, exchange in ((0, "SZ"), (1, "SH")):
                     try:
                         market_rows = client.stocks(market)
                     except MootdxError as exc:
                         logger.warning("mootdx %s 标的列表不可用: %s", exchange, exc)
-                        complete = complete and exchange == "BJ"
+                        complete = False
                         continue
-                    if not market_rows and exchange != "BJ":
+                    if not market_rows:
                         complete = False
                     for item in market_rows:
                         code = str(item.get("code") or "").strip()
                         name = normalize_instrument_name(item.get("name") or code)
-                        matches = _is_a_share(code, exchange)
-                        if asset_type == "stock" and is_delisted_name(name):
-                            matches = False
-                        if asset_type == "index":
+                        if asset_type == "stock":
+                            matches = (
+                                current_a_share_identity(code=code, exchange=exchange)
+                                is not None
+                                and not is_delisted_name(name)
+                            )
+                        elif asset_type == "index":
                             matches = (
                                 exchange == "SH" and code.startswith("000")
                             ) or (exchange == "SZ" and code.startswith("399"))
-                        elif asset_type == "etf":
+                        else:
                             matches = "ETF" in name.upper() and (
                                 (exchange == "SH" and code.startswith(("51", "52", "56", "58")))
                                 or (exchange == "SZ" and code.startswith("15"))
@@ -672,61 +821,56 @@ class MootdxProvider:
         fetched_ms = int(time.time() * 1000)
         result: list[dict] = []
         try:
-            with self._client_factory() as client:
-                for start in range(0, len(supported), _QUOTE_BATCH):
-                    chunk = supported[start : start + _QUOTE_BATCH]
-                    try:
-                        rows = client.quotes(chunk)
-                    except MootdxError as exc:
-                        logger.warning("mootdx 实时行情批次失败: %s", exc)
-                        continue
-                    for row in rows:
-                        market = row.get("market")
-                        exchange = "SH" if market == 1 else "SZ" if market == 0 else None
-                        symbol = _symbol(str(row.get("code") or ""), exchange)
-                        if symbol not in chunk:
-                            continue
-                        price = _to_float(row.get("price"))
-                        previous = _to_float(row.get("last_close"))
-                        change = (
-                            price - previous
-                            if price is not None and previous is not None
-                            else None
-                        )
-                        change_pct = (
-                            change / previous
-                            if change is not None and previous not in (None, 0)
-                            else None
-                        )
-                        volume = _to_float(row.get("vol"))
-                        record = {
-                            "symbol": symbol,
-                            "name": names.get(symbol),
-                            "last_price": price,
-                            "prev_close": previous,
-                            "open": _to_float(row.get("open")),
-                            "high": _to_float(row.get("high")),
-                            "low": _to_float(row.get("low")),
-                            "volume": volume,
-                            "amount": _to_float(row.get("amount")),
-                            "change_pct": change_pct,
-                            "change_amount": change,
-                            "amplitude": None,
-                            "turnover_rate": None,
-                            "timestamp": fetched_ms,
-                            "session": None,
-                        }
-                        if include_depth:
-                            record.update({
-                                "bid1": _to_float(row.get("bid1")),
-                                "bid1_volume": _to_float(row.get("bid_vol1")),
-                                "ask1": _to_float(row.get("ask1")),
-                                "ask1_volume": _to_float(row.get("ask_vol1")),
-                                "source_time": str(row.get("servertime") or "") or None,
-                            })
-                        result.append(record)
+            rows = self._persistent_quotes(supported, operation="实时行情")
         except MootdxError as exc:
             logger.warning("mootdx 实时行情连接失败: %s", exc)
+            return []
+        supported_set = set(supported)
+        for row in rows:
+            market = row.get("market")
+            exchange = "SH" if market == 1 else "SZ" if market == 0 else None
+            symbol = _symbol(str(row.get("code") or ""), exchange)
+            if symbol not in supported_set:
+                continue
+            price = _to_float(row.get("price"))
+            previous = _to_float(row.get("last_close"))
+            change = (
+                price - previous
+                if price is not None and previous is not None
+                else None
+            )
+            change_pct = (
+                change / previous
+                if change is not None and previous not in (None, 0)
+                else None
+            )
+            volume = _to_float(row.get("vol"))
+            record = {
+                "symbol": symbol,
+                "name": names.get(symbol),
+                "last_price": price,
+                "prev_close": previous,
+                "open": _to_float(row.get("open")),
+                "high": _to_float(row.get("high")),
+                "low": _to_float(row.get("low")),
+                "volume": volume,
+                "amount": _to_float(row.get("amount")),
+                "change_pct": change_pct,
+                "change_amount": change,
+                "amplitude": None,
+                "turnover_rate": None,
+                "timestamp": fetched_ms,
+                "session": None,
+            }
+            if include_depth:
+                record.update({
+                    "bid1": _to_float(row.get("bid1")),
+                    "bid1_volume": _to_float(row.get("bid_vol1")),
+                    "ask1": _to_float(row.get("ask1")),
+                    "ask1_volume": _to_float(row.get("ask_vol1")),
+                    "source_time": str(row.get("servertime") or "") or None,
+                })
+            result.append(record)
         return result
 
     def get_realtime(self) -> list[dict]:
@@ -755,41 +899,36 @@ class MootdxProvider:
         fetched_ms = int(time.time() * 1000)
         result: dict[str, dict] = {}
         try:
-            with self._client_factory() as client:
-                for start in range(0, len(supported), _QUOTE_BATCH):
-                    chunk = supported[start : start + _QUOTE_BATCH]
-                    try:
-                        rows = client.quotes(chunk)
-                    except MootdxError as exc:
-                        logger.warning("mootdx 五档批次失败: %s", exc)
-                        continue
-                    for row in rows:
-                        market = row.get("market")
-                        exchange = "SH" if market == 1 else "SZ" if market == 0 else None
-                        symbol = _symbol(str(row.get("code") or ""), exchange)
-                        if symbol not in chunk:
-                            continue
-                        result[symbol] = {
-                            "ask_prices": [
-                                _to_float(row.get(f"ask{level}"))
-                                for level in range(1, 6)
-                            ],
-                            "ask_volumes": [
-                                _to_float(row.get(f"ask_vol{level}"))
-                                for level in range(1, 6)
-                            ],
-                            "bid_prices": [
-                                _to_float(row.get(f"bid{level}"))
-                                for level in range(1, 6)
-                            ],
-                            "bid_volumes": [
-                                _to_float(row.get(f"bid_vol{level}"))
-                                for level in range(1, 6)
-                            ],
-                            "timestamp": fetched_ms,
-                        }
+            rows = self._persistent_quotes(supported, operation="五档")
         except MootdxError as exc:
             logger.warning("mootdx 五档连接失败: %s", exc)
+            return {}
+        supported_set = set(supported)
+        for row in rows:
+            market = row.get("market")
+            exchange = "SH" if market == 1 else "SZ" if market == 0 else None
+            symbol = _symbol(str(row.get("code") or ""), exchange)
+            if symbol not in supported_set:
+                continue
+            result[symbol] = {
+                "ask_prices": [
+                    _to_float(row.get(f"ask{level}"))
+                    for level in range(1, 6)
+                ],
+                "ask_volumes": [
+                    _to_float(row.get(f"ask_vol{level}"))
+                    for level in range(1, 6)
+                ],
+                "bid_prices": [
+                    _to_float(row.get(f"bid{level}"))
+                    for level in range(1, 6)
+                ],
+                "bid_volumes": [
+                    _to_float(row.get(f"bid_vol{level}"))
+                    for level in range(1, 6)
+                ],
+                "timestamp": fetched_ms,
+            }
         return result
 
     # ---- adjustment factors ----

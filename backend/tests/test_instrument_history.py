@@ -166,6 +166,50 @@ def test_instrument_sync_persists_current_and_history(tmp_path, monkeypatch) -> 
     ).row(0) == ("600001.SH", date(2026, 7, 2), True, True, "mootdx")
 
 
+def test_daily_stock_pool_replaces_current_rows_and_tombstones_removed_symbols(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    state = {
+        "day": date(2026, 7, 1),
+        "rows": [
+            {"symbol": "600001.SH", "name": "沪市主板"},
+            {"symbol": "300001.SZ", "name": "创业板"},
+            {"symbol": "510300.SH", "name": "沪深300ETF"},
+            {"symbol": "430047.BJ", "name": "北交所样本"},
+            {"symbol": "600002.SH", "name": "退市样本"},
+        ],
+    }
+    monkeypatch.setattr(
+        instrument_sync,
+        "_fetch_instruments_via_provider",
+        lambda: state["rows"],
+    )
+    monkeypatch.setattr(instrument_sync, "cn_today", lambda: state["day"])
+    monkeypatch.setattr(
+        "app.services.preferences.get_daily_data_provider",
+        lambda: "mootdx",
+    )
+
+    assert instrument_sync.sync_instruments(tmp_path) == 2
+    current_path = tmp_path / "instruments" / "instruments.parquet"
+    assert pl.read_parquet(current_path)["symbol"].to_list() == [
+        "300001.SZ",
+        "600001.SH",
+    ]
+
+    state["day"] = date(2026, 7, 2)
+    state["rows"] = [{"symbol": "300001.SZ", "name": "创业板"}]
+    assert instrument_sync.sync_instruments(tmp_path) == 1
+    assert pl.read_parquet(current_path)["symbol"].to_list() == ["300001.SZ"]
+
+    removed = load_instrument_history(tmp_path).filter(
+        (pl.col("symbol") == "600001.SH")
+        & (pl.col("valid_from") == date(2026, 7, 2))
+    ).row(0, named=True)
+    assert removed["is_listed"] is False
+
+
 def test_quote_name_enrichment_updates_same_day_history(tmp_path, monkeypatch) -> None:
     current_path = tmp_path / "instruments" / "instruments.parquet"
     current_path.parent.mkdir(parents=True)

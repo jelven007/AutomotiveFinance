@@ -47,9 +47,7 @@ def data_sources_dir() -> Path:
 def load_all(path: Path | None = None) -> None:
     """Load all custom provider YAML files into process memory."""
     global _PROVIDERS, _LOAD_ERRORS
-    for provider in _PROVIDERS.values():
-        provider.close()
-    _PROVIDERS = {}
+    close_all()
     _LOAD_ERRORS = []
 
     base = path or data_sources_dir()
@@ -70,6 +68,21 @@ def load_all(path: Path | None = None) -> None:
 
     # 内置可选插件 (plugins/ 目录)。与用户 YAML 源独立, 缺依赖只记状态不报错。
     _load_builtin_plugins()
+
+
+def close_all() -> None:
+    """Close registered providers and release their network resources."""
+    global _PROVIDERS
+    providers, _PROVIDERS = list(_PROVIDERS.values()), {}
+    for provider in providers:
+        try:
+            provider.close()
+        except Exception:
+            logger.warning(
+                "data source %s close failed",
+                getattr(provider, "name", type(provider).__name__),
+                exc_info=True,
+            )
 
 
 def list_sources() -> list[dict]:

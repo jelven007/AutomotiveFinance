@@ -1,7 +1,7 @@
 """标的维表同步服务。
 
-盘前 9:10 调用 tf.exchanges.get_instruments("SH"/"SZ"/"BJ", type="stock")
-获取全量标的元数据，flatten ext 字段，写入 instruments.parquet。
+盘前 9:10 获取沪深主板、科创板、创业板的全量有效股票元数据，
+flatten ext 字段后原子替换 instruments.parquet。
 
 Starter+ 盘后可用 quotes.get(universes) 顺便补充 name。
 """
@@ -12,7 +12,11 @@ from pathlib import Path
 
 import polars as pl
 
-from app.data_providers.instrument_status import is_delisted_name, normalize_instrument_name
+from app.data_providers.instrument_status import (
+    current_a_share_identity,
+    is_delisted_name,
+    normalize_instrument_name,
+)
 from app.instrument_history import update_instrument_history
 from app.market_time import cn_today
 from app.services.fs_utils import atomic_write_parquet
@@ -20,23 +24,29 @@ from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
 
-_EXCHANGES = ["SH", "SZ", "BJ"]
+_EXCHANGES = ["SH", "SZ"]
 
 
 def _flatten_instruments(items: list[dict]) -> list[dict]:
-    """把 SDK 返回的 Instrument 列表 flatten 成扁平行。"""
+    """Flatten and normalize the current Shanghai/Shenzhen A-share pool."""
     rows = []
     for item in items:
         name = normalize_instrument_name(item.get("name"))
-        if is_delisted_name(name):
+        identity = current_a_share_identity(
+            item.get("symbol"),
+            code=item.get("code"),
+            exchange=item.get("exchange"),
+        )
+        if identity is None or is_delisted_name(name):
             continue
+        symbol, code, exchange = identity
         row = {
-            "symbol": item.get("symbol"),
+            "symbol": symbol,
             "name": name,
-            "code": item.get("code"),
-            "exchange": item.get("exchange"),
-            "region": item.get("region"),
-            "type": item.get("type"),
+            "code": code,
+            "exchange": exchange,
+            "region": item.get("region") or "CN",
+            "type": "stock",
         }
         ext = item.get("ext") or {}
         for field in ("listing_date", "total_shares", "float_shares", "tick_size",
@@ -70,7 +80,11 @@ def _fetch_instruments_via_provider(asset_type: str = "stock") -> list[dict] | N
         items = provider.get_instruments(asset_type)
         if isinstance(items, pl.DataFrame):
             items = items.to_dicts()
-        rows = _flatten_instruments(items or [])
+        rows = (
+            _flatten_instruments(items or [])
+            if asset_type == "stock"
+            else [dict(item) for item in (items or []) if isinstance(item, dict)]
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("provider %s get_instruments 失败: %s", provider_name, e)
         return []
@@ -108,6 +122,15 @@ def sync_instruments(data_dir: Path) -> int:
                 logger.warning("get_instruments(%s) failed: %s", ex, e)
                 return 0
 
+    if not all_rows:
+        return 0
+
+    # Enforce the same universe contract for every provider. A successful
+    # snapshot is a full replacement, so stale/delisted rows disappear from
+    # the current pool while update_instrument_history records the transition.
+    all_rows = _flatten_instruments(all_rows)
+    all_rows = list({row["symbol"]: row for row in all_rows}.values())
+    all_rows.sort(key=lambda row: row["symbol"])
     if not all_rows:
         return 0
 

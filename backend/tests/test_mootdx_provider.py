@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 
 import pytest
 
+from app.plugins.mootdx.client import MootdxError
 from app.plugins.mootdx.provider import MootdxProvider
 
 
@@ -62,7 +66,7 @@ def _provider(fake: _FakeClient) -> MootdxProvider:
     return MootdxProvider(client_factory=lambda: fake)
 
 
-def test_instruments_filters_non_a_share_products_and_supports_bj_when_available():
+def test_instruments_keeps_only_current_supported_a_share_boards():
     fake = _FakeClient()
     fake.stocks_by_market = {
         0: [
@@ -86,13 +90,110 @@ def test_instruments_filters_non_a_share_products_and_supports_bj_when_available
     assert [row["symbol"] for row in rows] == [
         "000001.SZ",
         "300750.SZ",
-        "430047.BJ",
         "600519.SH",
         "688981.SH",
     ]
-    assert fake.stock_calls == [0, 1, 2]
+    assert fake.stock_calls == [0, 1]
     assert rows[0]["ext"]["tick_size"] == 0.01
     assert rows[0]["ext"]["float_shares"] is None
+
+
+class _PersistentFakeClient:
+    def __init__(self, *, fail: bool = False, delay: float = 0.0) -> None:
+        self.fail = fail
+        self.delay = delay
+        self.calls: list[list[str]] = []
+        self.closed = False
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def quotes(self, symbols):
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            self.calls.append(list(symbols))
+            if self.delay:
+                time.sleep(self.delay)
+            if self.fail:
+                raise MootdxError("offline")
+            return [
+                {
+                    "market": 0,
+                    "code": symbol.split(".", 1)[0],
+                    "price": 10.0,
+                    "last_close": 9.9,
+                }
+                for symbol in symbols
+            ]
+        finally:
+            with self._lock:
+                self.active -= 1
+
+    def close(self):
+        self.closed = True
+
+
+def test_full_market_quotes_use_and_reuse_35_persistent_connections(monkeypatch):
+    monkeypatch.delenv("MOOTDX_QUOTE_CONNECTIONS", raising=False)
+    clients: list[_PersistentFakeClient] = []
+    clients_lock = threading.Lock()
+
+    def factory():
+        client = _PersistentFakeClient()
+        with clients_lock:
+            clients.append(client)
+        return client
+
+    provider = MootdxProvider(client_factory=factory)
+    symbols = [f"{index:06d}.SZ" for index in range(5_484)]
+
+    rows = provider._quote_rows(symbols, include_names=False)
+
+    assert [row["symbol"] for row in rows] == symbols
+    assert len(clients) == 35
+    assert sum(len(client.calls) for client in clients) == 69
+    assert sorted(len(client.calls) for client in clients) == [1] + [2] * 34
+
+    provider._quote_rows(symbols[:80], include_names=False)
+    assert len(clients) == 35
+    assert sum(len(client.calls) for client in clients) == 70
+
+    provider.close()
+    assert all(client.closed for client in clients)
+
+
+def test_quote_worker_replaces_failed_connection_and_reuses_replacement(monkeypatch):
+    monkeypatch.setenv("MOOTDX_QUOTE_CONNECTIONS", "1")
+    failed = _PersistentFakeClient(fail=True)
+    healthy = _PersistentFakeClient()
+    clients = [failed, healthy]
+
+    provider = MootdxProvider(client_factory=lambda: clients.pop(0))
+    first = provider._quote_rows(["000001.SZ"], include_names=False)
+    replacement = provider._quote_pool._workers[0]._client
+
+    assert [row["symbol"] for row in first] == ["000001.SZ"]
+    assert failed.closed is True
+    assert replacement is healthy
+    assert provider._quote_rows(["000002.SZ"], include_names=False)
+    assert healthy.calls == [["000001.SZ"], ["000002.SZ"]]
+
+
+def test_quote_cycles_do_not_overlap(monkeypatch):
+    monkeypatch.setenv("MOOTDX_QUOTE_CONNECTIONS", "1")
+    client = _PersistentFakeClient(delay=0.03)
+    provider = MootdxProvider(client_factory=lambda: client)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(provider._quote_rows, ["000001.SZ"], include_names=False)
+            for _ in range(2)
+        ]
+        assert all(future.result() for future in futures)
+
+    assert client.max_active == 1
 
 
 def test_auction_snapshot_preserves_server_time_and_top_of_book():

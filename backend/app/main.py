@@ -419,6 +419,12 @@ async def _application_lifespan(app: FastAPI):
         mrs = getattr(app.state, "minute_refresh", None)
         if mrs:
             mrs.stop()
+        try:
+            from app.data_providers import custom as custom_sources
+
+            custom_sources.close_all()
+        except Exception:
+            logger.warning("data source shutdown failed", exc_info=True)
         # webhook 投递线程池: 放弃排队投递并关闭, 避免通知静默丢失在 daemon 线程里
         from app.services.quote_service import shutdown_webhook_executor
 
