@@ -1,4 +1,4 @@
-"""内置扩展数据预设 — 概念/行业在交易日盘中每 30 分钟自动更新。
+"""内置扩展数据预设 — 概念/行业可在交易日双时段内每分钟自动更新。
 
 设计原则:
   - 扩展数据通用逻辑零改动 (ExtConfig / fetch_and_ingest / API / 前端均不动)
@@ -6,10 +6,10 @@
   - 「已存在则跳过」: 绝不覆盖用户已有数据, 老用户零影响
   - 定时拉取由 PullScheduler 异步执行, 拉取失败不阻断启动
 
-种子数据来源 (概念/行业各自独立配置):
-  - 概念: https://shy313.com/api/plugins/market_flow/exports/ths-concepts
-  - 行业: https://shy313.com/api/plugins/market_flow/exports/ths-industries
-作者更新数据只需改接口上的 JSON, 用户下次拉取自动同步, 无需发版。
+数据来源由环境变量独立配置:
+  - EXT_CONCEPT_DATA_URL
+  - EXT_INDUSTRY_DATA_URL
+未配置 URL 时仍创建表结构, 但自动拉取保持关闭。
 
 接入点: app.main.lifespan → ensure_builtin_presets(store.data_dir)
 """
@@ -19,6 +19,7 @@ import logging
 import math
 from pathlib import Path
 
+from app.config import settings
 from app.services.ext_data import (
     ExtConfig,
     ExtConfigStore,
@@ -28,10 +29,6 @@ from app.services.ext_data import (
 )
 
 logger = logging.getLogger(__name__)
-
-# 种子数据源 (概念/行业各自独立配置, 作者维护)
-_CONCEPT_DATA_URL = "https://shy313.com/api/plugins/market_flow/exports/ths-concepts"
-_INDUSTRY_DATA_URL = "https://shy313.com/api/plugins/market_flow/exports/ths-industries"
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +41,7 @@ def _concept_preset() -> ExtConfig:
     接口结构: [{symbol, name, concepts: [概念1, 概念2, ...]}]
     本地 schema: 股票代码 / 股票简称 / 所属概念(分号拼接) / symbol / code
     """
+    data_url = settings.ext_concept_data_url.strip()
     return ExtConfig(
         id="ext_gn_ths",
         label="扩展概念",
@@ -55,16 +53,16 @@ def _concept_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属概念", "string", "所属概念"),
         ],
-        description="同花顺概念分类 (交易日 09:00-16:00 每 30 分钟更新, 启动时立即刷新)",
+        description="同花顺概念分类 (配置上游后, 交易日 09:15-11:30 / 13:00-15:15 每分钟更新)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
-            url=_CONCEPT_DATA_URL,
+            url=data_url,
             method="GET",
-            schedule_minutes=30,
-            enabled=True,
-            time_window_start="09:00",
-            time_window_end="16:00",
+            schedule_minutes=1,
+            enabled=bool(data_url),
+            time_window_start="09:15",
+            time_window_end="15:15",
         ),
     )
 
@@ -75,6 +73,7 @@ def _industry_preset() -> ExtConfig:
     接口结构: [{symbol, name, industries: [一级行业, 二级行业, 三级行业]}]
     本地 schema: 股票代码 / 股票简称 / 所属同花顺行业(横杠拼接) / symbol / code
     """
+    data_url = settings.ext_industry_data_url.strip()
     return ExtConfig(
         id="ext_hy_ths",
         label="扩展行业",
@@ -86,16 +85,16 @@ def _industry_preset() -> ExtConfig:
             ExtField("股票简称", "string", "股票简称"),
             ExtField("所属同花顺行业", "string", "所属同花顺行业"),
         ],
-        description="同花顺行业分类 (交易日 09:00-16:00 每 30 分钟更新, 启动时立即刷新)",
+        description="同花顺行业分类 (配置上游后, 交易日 09:15-11:30 / 13:00-15:15 每分钟更新)",
         symbol_map={"type": "mapped", "col": "股票代码"},
         code_map={"type": "computed", "from": "symbol", "method": "strip_exchange"},
         pull=PullConfig(
-            url=_INDUSTRY_DATA_URL,
+            url=data_url,
             method="GET",
-            schedule_minutes=30,
-            enabled=True,
-            time_window_start="09:00",
-            time_window_end="16:00",
+            schedule_minutes=1,
+            enabled=bool(data_url),
+            time_window_start="09:15",
+            time_window_end="15:15",
         ),
     )
 
@@ -238,8 +237,9 @@ def get_preset(config_id: str) -> ExtConfig | None:
 async def ensure_builtin_presets(data_dir: Path) -> None:
     """启动时为缺失的预设创建 config.json, 由调度器异步拉取。
 
-    新建预设默认启用交易日 09:00-16:00 每 30 分钟拉取; PullScheduler 在启动后
-    无视时段立即执行首轮。用户仍可在扩展数据设置中关闭自动拉取。
+    配置上游 URL 时, 新建预设默认启用交易日
+    09:15-11:30 / 13:00-15:15 每分钟拉取; PullScheduler 在启动后
+    无视时段立即执行首轮。未配置 URL 时预设保持关闭, 可在扩展数据设置中补充。
 
     安全保证:
       - 已存在则完全跳过 (绝不覆盖用户数据)
@@ -255,8 +255,10 @@ async def ensure_builtin_presets(data_dir: Path) -> None:
         try:
             store.upsert(config)
             logger.info(
-                "内置扩展表 %s 配置已就绪 (交易日 09:00-16:00 每 30 分钟更新)",
+                "内置扩展表 %s 配置已就绪 "
+                "(自动拉取=%s, 交易日 09:15-11:30 / 13:00-15:15 每分钟更新)",
                 config.id,
+                bool(config.pull and config.pull.enabled),
             )
         except Exception as e:
             logger.warning("内置扩展表 %s 配置写入失败 (不影响启动): %s", config.id, e)

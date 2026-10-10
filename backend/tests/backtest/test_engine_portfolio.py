@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 import polars as pl
+import pytest
 
 from app.backtest.engine import BacktestEngine, MatcherConfig
 
@@ -518,3 +519,26 @@ def test_minute_signal_exit_without_next_bar_falls_back_to_next_open():
     assert result.trades[0].exit_date == "2024-01-04"
     assert result.trades[0].exit_price == 8.8
     assert result.stats["execution"]["sell_minute_trigger_fallback"] == 1
+
+
+@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("risk", [{"stop_loss_pct": 0.05}, {"take_profit_pct": 0.1}])
+def test_scheduled_open_exit_precedes_later_intraday_risk(independent, risk):
+    panel = _panel(["A"], days=4, overrides={
+        ("A", 2): {"open": 10.5, "high": 12.0, "low": 9.0, "close": 10.0},
+    })
+    engine = _engine()
+    simulate = (
+        engine.simulate_independent_candidates if independent else engine.simulate_portfolio
+    )
+    result = simulate(
+        panel,
+        _mask(panel, {("A", 0)}),
+        _mask(panel, set()),
+        MatcherConfig(
+            matching="open_t+1", max_hold_days=1, fees_pct=0, slippage_bps=0, **risk,
+        ),
+    )
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_price == 10.5
+    assert result.trades[0].exit_reason == "max_hold"

@@ -480,7 +480,7 @@ export function Layout() {
   const navigate = useNavigate()
   const [loggingOut, setLoggingOut] = useState(false)
   const version = versionData?.version
-  const realtimeEnabled = prefs?.realtime_quotes_enabled ?? false
+  const realtimeEnabled = prefs?.realtime_quotes_enabled ?? true
   // 自选实时模式限制提示: 可手动关闭, 不持久化 (刷新后恢复显示)
   const [dismissFreeHint, setDismissFreeHint] = useState(false)
   // 开启实时行情时若存在排队中的挖掘任务 → 确认弹窗 (实时落盘会让排队任务开跑即失败)
@@ -729,7 +729,7 @@ export function Layout() {
                 className="font-bold text-[11px] uppercase tracking-[0.14em] text-foreground whitespace-nowrap"
                 style={{ textShadow: `0 0 10px ${BRAND}44` }}
               >
-                Tick Stock Panel
+                TSP
               </div>
             )}
             {/* 收起/展开 按钮 (桌面三态循环) / 移动端抽屉关闭按钮 */}

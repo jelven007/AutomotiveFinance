@@ -1,15 +1,18 @@
-"""内置概念/行业 preset 默认启用交易日盘中每 30 分钟自动拉取。
+"""内置概念/行业 preset 使用显式上游配置。
 
 ensure_builtin_presets 只负责创建配置, 不直接等待网络请求; 随后
-PullScheduler.refresh 会为 enabled 配置创建后台任务, 启动时立即拉取一次,
-后续在交易日 09:00-16:00 每 30 分钟刷新。已有配置必须保持用户设置,
-不因启动而被覆盖。
+PullScheduler.refresh 会为配置了 URL 的 enabled 配置创建后台任务。未配置 URL
+时默认关闭, 避免新安装隐式访问外部服务。已有配置必须保持用户设置, 不因启动
+而被覆盖。
 """
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
 
+import pytest
+
+from app.config import settings
 from app.services.ext_data import ExtConfigStore
 from app.services.ext_presets import (
     _concept_preset,
@@ -20,19 +23,30 @@ from app.services.ext_presets import (
 _PRESET_IDS = ("ext_gn_ths", "ext_hy_ths")
 
 
-def test_builtin_presets_ship_with_market_hours_pull_enabled() -> None:
-    """全新安装的内置 preset 默认在交易日盘中每 30 分钟自动拉取。"""
+def test_builtin_presets_are_disabled_without_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """全新安装未配置上游时保留表结构, 但不自动访问外部服务。"""
+    monkeypatch.setattr(settings, "ext_concept_data_url", "")
+    monkeypatch.setattr(settings, "ext_industry_data_url", "")
+
     for preset in (_concept_preset(), _industry_preset()):
         assert preset.pull is not None
-        assert preset.pull.url
-        assert preset.pull.enabled is True
-        assert preset.pull.schedule_minutes == 30
-        assert preset.pull.time_window_start == "09:00"
-        assert preset.pull.time_window_end == "16:00"
+        assert preset.pull.url == ""
+        assert preset.pull.enabled is False
+        assert preset.pull.schedule_minutes == 1
+        assert preset.pull.time_window_start == "09:15"
+        assert preset.pull.time_window_end == "15:15"
 
 
-def test_ensure_builtin_presets_writes_enabled_configs(tmp_path: Path) -> None:
-    """全新数据目录写入启用的配置, 供调度器创建盘中定时任务。"""
+def test_ensure_builtin_presets_writes_enabled_configs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式配置上游后写入启用配置, 供调度器创建盘中定时任务。"""
+    monkeypatch.setattr(settings, "ext_concept_data_url", "https://data.example/concepts")
+    monkeypatch.setattr(settings, "ext_industry_data_url", "https://data.example/industries")
+
     asyncio.run(ensure_builtin_presets(tmp_path))
 
     store = ExtConfigStore(tmp_path)
@@ -40,14 +54,21 @@ def test_ensure_builtin_presets_writes_enabled_configs(tmp_path: Path) -> None:
         config = store.get(cid)
         assert config is not None, f"{cid} 配置未创建"
         assert config.pull is not None
+        assert config.pull.url.startswith("https://data.example/")
         assert config.pull.enabled is True
-        assert config.pull.schedule_minutes == 30
-        assert config.pull.time_window_start == "09:00"
-        assert config.pull.time_window_end == "16:00"
+        assert config.pull.schedule_minutes == 1
+        assert config.pull.time_window_start == "09:15"
+        assert config.pull.time_window_end == "15:15"
 
 
-def test_ensure_builtin_presets_keeps_existing_user_config(tmp_path: Path) -> None:
+def test_ensure_builtin_presets_keeps_existing_user_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """老用户/已存在的配置一律不动, 包括用户主动关闭自动拉取。"""
+    monkeypatch.setattr(settings, "ext_concept_data_url", "https://data.example/concepts")
+    monkeypatch.setattr(settings, "ext_industry_data_url", "https://data.example/industries")
+
     asyncio.run(ensure_builtin_presets(tmp_path))
     store = ExtConfigStore(tmp_path)
     config = store.get("ext_gn_ths")

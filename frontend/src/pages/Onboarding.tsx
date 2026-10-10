@@ -104,7 +104,7 @@ export function Onboarding() {
             className="shrink-0"
             style={{ color: BRAND, filter: `drop-shadow(0 0 8px ${BRAND}55)` }}
           />
-          <span className="text-sm font-semibold tracking-tight">Tick Stock Panel</span>
+          <span className="text-sm font-semibold tracking-tight">TSP</span>
         </div>
         {/* 步骤进度条 —— 胶囊式 */}
         <div className="flex items-center gap-1.5">
@@ -181,8 +181,8 @@ function DisclaimerStep({ onNext }: { onNext: () => void }) {
           <ShieldCheck className="h-4 w-4 text-accent shrink-0 mt-0.5" />
           <div className="space-y-2.5 text-sm text-secondary leading-relaxed">
             <p>
-              本项目为<strong className="text-warning">个人开源项目</strong>,由个人独立维护,与任何商业数据服务
-              <span className="text-warning">无官方关联</span>。数据能力依赖第三方数据服务提供。
+              本系统是独立部署的量化研究工具,与所接入的商业数据服务
+              <span className="text-warning">无官方关联</span>。数据能力和可用范围取决于实际配置的数据源。
             </p>
             <p>
               仅供学习研究使用,不构成任何投资建议。股市有风险,使用本项目产生的任何盈亏由使用者自行承担。
@@ -357,7 +357,7 @@ function DataSourceStep({ onNext, onBack }: { onNext: () => void; onBack: () => 
     {
       name: 'tickflow', display: 'TickFlow', env: 'TICKFLOW_API_KEY', configured: tfConfigured, autoFocus: true,
       copy: '留空即免费 None 模式,可直接使用;填写 Key 后按订阅档位解锁实时 / 分钟 / 盘口 / 财务等更多数据集。仅存本地 (secrets.json),先验证后保存。',
-      register: { label: '前往 TickFlow 注册获取 Key', url: 'https://tickflow.org/auth/register?ref=V3KDKGXPEA' },
+      register: { label: '前往 TickFlow 获取 Key', url: 'https://tickflow.org/' },
     },
     {
       name: 'fuyao', display: 'fuyao', env: 'FUYAO_API_KEY', configured: fuyaoConfigured, autoFocus: false,

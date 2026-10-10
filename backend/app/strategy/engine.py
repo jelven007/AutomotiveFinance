@@ -544,6 +544,10 @@ class StrategyEngine:
                 raise ValueError(
                     "minute_filter strategy must declare timeframes == ['1m']"
                 )
+            if meta.get("minute_entry_fill", "signal_close") not in {
+                "signal_close", "next_minute_open",
+            }:
+                raise ValueError("minute_entry_fill must be signal_close or next_minute_open")
             # 可选日线历史窗口: 声明 daily_history_bars 时 fn 必须接受 daily 关键字,
             # 引擎会把 context.daily_history (enriched 日线窗口) 注入进来。
             minute_daily_bars = int(meta.get("daily_history_bars") or 0)

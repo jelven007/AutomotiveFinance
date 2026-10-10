@@ -964,7 +964,16 @@ class BacktestEngine:
                 return False, "buy_suspended"
             if not _valid_price(entry_prices[time_id, asset_id]):
                 return False, "buy_invalid_price"
-            if config.entry_fill == "close_t" and bool(matrix.limit_up_locked[time_id, asset_id]):
+            minute_entry = (
+                matrix.entry_price is not None
+                and np.isfinite(matrix.entry_price[time_id, asset_id])
+            )
+            # 分钟价已由回放器按成交时涨停价校验, 不能再用未来收盘封板拒买。
+            if (
+                config.entry_fill == "close_t"
+                and not minute_entry
+                and bool(matrix.limit_up_locked[time_id, asset_id])
+            ):
                 # close_t 按信号日收盘价成交: 收盘封板(含一字)在收盘价的买队排队
                 # 现实中排不进, 一律拦截 — 旧实现只拦一字板, 尾盘封板股按涨停价
                 # "成交"导致回测收益虚高。open_t+1 按次日开盘成交, 不受此限。
@@ -1000,6 +1009,13 @@ class BacktestEngine:
             open_price = float(matrix.open[time_id, asset_id])
             low_price = float(matrix.low[time_id, asset_id])
             high_price = float(matrix.high[time_id, asset_id])
+            if config.exit_fill == "open_t+1" and (
+                matrix.exit[time_id, asset_id]
+                or (config.max_hold_days is not None and pos["hold_days"] >= config.max_hold_days)
+                or time_id == matrix.shape[0] - 1
+            ):
+                # 已安排开盘离场, 只能检查开盘跳空风险, 后续日内高低点不可抢先。
+                low_price = high_price = open_price
             peak_price = float(pos["max_high"])
             lines: list[tuple[float, str]] = []
             if config.stop_loss_pct is not None:
@@ -1940,7 +1956,16 @@ class BacktestEngine:
                 return False, "buy_suspended"
             if not _valid_price(entry_prices[time_id, asset_id]):
                 return False, "buy_invalid_price"
-            if config.entry_fill == "close_t" and bool(matrix.limit_up_locked[time_id, asset_id]):
+            minute_entry = (
+                matrix.entry_price is not None
+                and np.isfinite(matrix.entry_price[time_id, asset_id])
+            )
+            # 分钟价已由回放器按成交时涨停价校验, 不能再用未来收盘封板拒买。
+            if (
+                config.entry_fill == "close_t"
+                and not minute_entry
+                and bool(matrix.limit_up_locked[time_id, asset_id])
+            ):
                 # close_t 按信号日收盘价成交: 收盘封板(含一字)在收盘价的买队排队
                 # 现实中排不进, 一律拦截 — 旧实现只拦一字板, 尾盘封板股按涨停价
                 # "成交"导致回测收益虚高。open_t+1 按次日开盘成交, 不受此限。
@@ -2088,6 +2113,13 @@ class BacktestEngine:
                 open_price = float(matrix.open[time_id, asset_id])
                 low_price = float(matrix.low[time_id, asset_id])
                 high_price = float(matrix.high[time_id, asset_id])
+                if config.exit_fill == "open_t+1" and (
+                    matrix.exit[time_id, asset_id]
+                    or (config.max_hold_days is not None and pos["hold_days"] >= config.max_hold_days)
+                    or time_id == time_count - 1
+                ):
+                    # 计划开盘卖出的持仓不能再用该日盘中高低点触发风控。
+                    low_price = high_price = open_price
                 entry_price = float(pos["entry_price"])
                 peak_price = float(pos["max_high"])
                 risk_lines: list[tuple[float, str]] = []

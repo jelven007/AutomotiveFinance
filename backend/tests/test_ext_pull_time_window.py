@@ -113,6 +113,40 @@ def test_builtin_preset_subsequent_run_requires_confirmed_trading_day(
     ) is None
 
 
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected_reason"),
+    [
+        (9, 14, "不在拉取时间窗口内"),
+        (9, 15, None),
+        (11, 29, None),
+        (11, 30, "不在拉取时间窗口内"),
+        (12, 59, "不在拉取时间窗口内"),
+        (13, 0, None),
+        (15, 14, None),
+        (15, 15, "不在拉取时间窗口内"),
+    ],
+)
+def test_builtin_presets_use_two_intraday_windows(
+    at_beijing,
+    monkeypatch,
+    hour: int,
+    minute: int,
+    expected_reason: str | None,
+) -> None:
+    """内置概念/行业午休暂停, 起止边界与其他盘中常驻任务一致。"""
+    from app.services import trading_day
+
+    at_beijing(datetime(2026, 3, 2, hour, minute, tzinfo=CN_TZ))
+    monkeypatch.setattr(trading_day, "is_trading_day", lambda: True)
+    pull = PullConfig(time_window_start="09:15", time_window_end="15:15")
+
+    assert ext_pull._scheduled_pull_skip_reason(
+        "ext_gn_ths",
+        pull,
+        is_startup_run=False,
+    ) == expected_reason
+
+
 def test_custom_pull_is_not_forced_to_follow_a_share_trading_days(
     at_beijing,
     monkeypatch,

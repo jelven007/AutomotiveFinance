@@ -1,12 +1,12 @@
 """盘中分钟增量刷新服务 (minute_refresh) 测试。
 
 覆盖:
-- 连续竞价时段判定 (含边界)
+- 盘中双时段判定 (含边界)
 - 门控链: 开关关闭 / 能力缺失 / 时段外 / 放行 (自定义源与 TickFlow 统一口径)
 - 数据源路由: full_minute 偏好 → 自定义源 (get_intraday_batch / get_intraday_latest /
   get_minute 回退) 或降级 TickFlow; 仅修复轮源 60s 节奏下限
 - 单轮: mock 边界层脉冲 + 落盘, 校验状态字段与 universe 来源
-- 偏好读写: 默认关闭、间隔 clamp [3, 120]
+- 偏好读写: 默认开启、间隔 clamp [1, 120]
 - API: /minute-refresh/status 无服务时 available=false
 
 不发起真实网络请求: TickFlow 侧边界函数与 _write_minute_partition 均
@@ -19,7 +19,7 @@ from datetime import datetime
 import polars as pl
 
 from app.services import minute_refresh, preferences
-from app.services.minute_refresh import MinuteRefreshService, _in_continuous_session
+from app.services.minute_refresh import MinuteRefreshService, _in_refresh_window
 
 
 def _isolated_prefs(tmp_path, monkeypatch):
@@ -58,15 +58,17 @@ class _FakeRepo:
 # ── 时段判定 ────────────────────────────────────────────────────────
 
 
-def test_continuous_session_boundaries():
+def test_refresh_window_boundaries():
     wk = datetime(2026, 8, 25, 10, 0)  # 周二
-    assert _in_continuous_session(wk)
-    assert not _in_continuous_session(datetime(2026, 8, 25, 9, 29))
-    assert not _in_continuous_session(datetime(2026, 8, 25, 11, 31))   # 午休
-    assert _in_continuous_session(datetime(2026, 8, 25, 13, 0))        # 午后恢复
-    assert _in_continuous_session(datetime(2026, 8, 25, 15, 0))        # 收盘瞬时
-    assert not _in_continuous_session(datetime(2026, 8, 25, 15, 1))
-    assert not _in_continuous_session(datetime(2026, 8, 22, 10, 0))    # 周六
+    assert _in_refresh_window(wk)
+    assert not _in_refresh_window(datetime(2026, 8, 25, 9, 14))
+    assert _in_refresh_window(datetime(2026, 8, 25, 9, 15))
+    assert not _in_refresh_window(datetime(2026, 8, 25, 11, 30))       # 午休
+    assert not _in_refresh_window(datetime(2026, 8, 25, 12, 59))
+    assert _in_refresh_window(datetime(2026, 8, 25, 13, 0))            # 午后恢复
+    assert _in_refresh_window(datetime(2026, 8, 25, 15, 14))
+    assert not _in_refresh_window(datetime(2026, 8, 25, 15, 15))
+    assert not _in_refresh_window(datetime(2026, 8, 22, 10, 0))        # 周六
 
 
 # ── 门控链 ──────────────────────────────────────────────────────────
@@ -88,7 +90,7 @@ def _svc(tmp_path, monkeypatch, *, enabled=True, capability=True, in_hours=True,
         )
     svc = MinuteRefreshService(_FakeRepo(["600000.SH"]))
     svc.set_app_state(_FakeAppState(capability))
-    monkeypatch.setattr(minute_refresh, "_in_continuous_session", lambda now=None: in_hours)
+    monkeypatch.setattr(minute_refresh, "_in_refresh_window", lambda now=None: in_hours)
     # 交易日探针默认未知 (None → 放行): 隔离真实网络探测, holiday 分支在
     # test_trading_day.py 单独覆盖
     from app.services import trading_day
@@ -400,7 +402,7 @@ def test_status_reports_gate_reason_when_stopped(tmp_path, monkeypatch):
     assert st["enabled"] is False
     assert st["running"] is False
     assert st["gate_reason"] == "disabled"
-    assert st["interval_seconds"] == 6
+    assert st["interval_seconds"] == 1
 
 
 # ── 偏好 ────────────────────────────────────────────────────────────
@@ -408,24 +410,24 @@ def test_status_reports_gate_reason_when_stopped(tmp_path, monkeypatch):
 
 def test_refresh_preferences_defaults_and_clamp(tmp_path, monkeypatch):
     _isolated_prefs(tmp_path, monkeypatch)
-    assert preferences.get_minute_refresh_enabled() is False
-    assert preferences.get_minute_refresh_interval() == 6
-    preferences.save({"minute_refresh_interval": 1})
-    assert preferences.get_minute_refresh_interval() == 3  # 下限
+    assert preferences.get_minute_refresh_enabled() is True
+    assert preferences.get_minute_refresh_interval() == 1
+    preferences.save({"minute_refresh_interval": 0})
+    assert preferences.get_minute_refresh_interval() == 1  # 下限
     preferences.save({"minute_refresh_interval": 999})
     assert preferences.get_minute_refresh_interval() == 120  # 上限
     preferences.save({"minute_refresh_interval": 15})
     assert preferences.get_minute_refresh_interval() == 15
 
 def test_realtime_monitor_config_owns_refresh_keys(tmp_path, monkeypatch):
-    """盘中增量配置归属实时监控端点 (set_realtime_monitor_config), 并 clamp 到 [3,120]。"""
+    """盘中增量配置归属实时监控端点, 并 clamp 到 [1,120]。"""
     _isolated_prefs(tmp_path, monkeypatch)
     saved = preferences.set_realtime_monitor_config({
         "minute_refresh_enabled": True,
-        "minute_refresh_interval": 1,   # 越界 → clamp 到下限
+        "minute_refresh_interval": 0,   # 越界 → clamp 到下限
     })
     assert saved["minute_refresh_enabled"] is True
-    assert saved["minute_refresh_interval"] == 3
+    assert saved["minute_refresh_interval"] == 1
     saved = preferences.set_realtime_monitor_config({"minute_refresh_interval": 400})
     assert saved["minute_refresh_interval"] == 120
     saved = preferences.set_realtime_monitor_config({"minute_refresh_interval": 6})

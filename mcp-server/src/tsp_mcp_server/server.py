@@ -1,4 +1,4 @@
-"""tick-stock-panel MCP 服务器 — 开放接口的 AI 工具桥。
+"""TSP MCP 服务器 — 开放接口的 AI 工具桥。
 
 架构 (docs/features.md → 开放接口):
   AI 客户端 (Claude/ZCode/Cursor…) ↔ MCP stdio (JSON-RPC) ↔ 本服务器
@@ -22,7 +22,7 @@ SCOPES = {s.strip() for s in os.environ.get(
 ).split(",") if s.strip()}
 
 mcp = MCPServer(
-    "tick-stock-panel",
+    "tsp",
     instructions=(
         "A股行情、策略回测与监控面板。标的代码格式 600519.SH / 000001.SZ / 510300.SH;"
         "指数如 000001.SH(上证)。涉及交易/写数据的工具需面板侧授予相应权限。"

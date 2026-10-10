@@ -77,7 +77,7 @@ def save(updates: dict) -> dict:
 
 
 def get_realtime_quotes_enabled() -> bool:
-    return load().get("realtime_quotes_enabled", False)
+    return bool(load().get("realtime_quotes_enabled", True))
 
 
 def get_watchlist_groups_in_nav() -> bool:
@@ -86,7 +86,7 @@ def get_watchlist_groups_in_nav() -> bool:
 
 
 def get_realtime_quote_interval() -> float:
-    return load().get("realtime_quote_interval", 6.0)
+    return load().get("realtime_quote_interval", 1.0)
 
 
 def set_realtime_quote_interval(interval: float) -> float:
@@ -195,25 +195,25 @@ def get_minute_sync_segment_days() -> int:
     """
     return max(5, min(30, load().get("minute_sync_segment_days", 20)))
 
-# ===== 盘中分钟增量刷新 (Expert 专有) =====
+# ===== 盘中分钟增量刷新 (全量分钟能力) =====
 
-# 稳态轮为 intraday.universe 单请求增量, 无脉冲并发, 间隔可低至 3s;
+# 稳态轮为 intraday.universe 单请求增量, 无脉冲并发, 间隔可低至 1s;
 # 全天修复轮 (intraday.batch 28 块爆发) 的 rpm 安全与间隔无关, 由轮次
 # 调度 max(间隔, 单轮完成) 天然防重叠。
-_MINUTE_REFRESH_INTERVAL_MIN = 3
+_MINUTE_REFRESH_INTERVAL_MIN = 1
 _MINUTE_REFRESH_INTERVAL_MAX = 120
 
 
 def get_minute_refresh_enabled() -> bool:
-    """盘中分钟K增量落盘开关。默认关闭; 能力门控 (Expert) 在服务层判断。"""
-    return bool(load().get("minute_refresh_enabled", False))
+    """盘中分钟K增量落盘开关。默认开启; 能力门控在服务层判断。"""
+    return bool(load().get("minute_refresh_enabled", True))
 
 
 def get_minute_refresh_interval() -> int:
-    """盘中分钟增量刷新间隔(秒)。默认 6,范围 [3, 120]。"""
+    """盘中分钟增量刷新间隔(秒)。默认 1,范围 [1, 120]。"""
     return max(
         _MINUTE_REFRESH_INTERVAL_MIN,
-        min(_MINUTE_REFRESH_INTERVAL_MAX, int(load().get("minute_refresh_interval", 6))),
+        min(_MINUTE_REFRESH_INTERVAL_MAX, int(load().get("minute_refresh_interval", 1))),
     )
 
 
@@ -1025,7 +1025,7 @@ def set_realtime_monitor_config(cfg: dict) -> dict:
     if "minute_refresh_enabled" in cfg:
         updates["minute_refresh_enabled"] = bool(cfg["minute_refresh_enabled"])
     if "minute_refresh_interval" in cfg:
-        # clamp 到 [3, 120], 与 getter 一致, 防前端传越界值
+        # clamp 到 [1, 120], 与 getter 一致, 防前端传越界值
         updates["minute_refresh_interval"] = max(
             _MINUTE_REFRESH_INTERVAL_MIN,
             min(_MINUTE_REFRESH_INTERVAL_MAX, int(cfg["minute_refresh_interval"])))

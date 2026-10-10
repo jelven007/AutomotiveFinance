@@ -1,5 +1,5 @@
 ; ===========================================================================
-; Tick Stock Panel — Inno Setup 安装包脚本
+; TSP — Inno Setup 安装包脚本
 ; ===========================================================================
 ; 用途: 把 PyInstaller 产出的 dist/TSP/ 文件夹封装成
 ;       单个 Setup.exe 安装程序 (双击→安装向导→快捷方式→可卸载)。
@@ -19,7 +19,7 @@
 ; ===========================================================================
 
 #define MyAppName          "TSP"
-#define MyAppNameEN       "Tick Stock Panel"
+#define MyAppNameEN       "TSP"
 #define MyAppExeName      "TSP.exe"
 #define MyAppPublisher    "TSP"
 #define WebView2SetupName "MicrosoftEdgeWebView2Setup.exe"

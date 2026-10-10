@@ -1,6 +1,6 @@
 # 开放接口示例 (Open API Examples)
 
-外部程序接入 tick-stock-panel 核心能力的可运行最小示例 — 纯 Python 标准库, 零第三方依赖。
+外部程序接入 TSP 核心能力的可运行最小示例 — 纯 Python 标准库, 零第三方依赖。
 
 ## 准备
 

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" fill="none" role="img" aria-label="Tick Stock Panel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512" fill="none" role="img" aria-label="TSP">
   <!-- 打包用 logo — 方案 0 品牌渐变版 (#A78BFA→#7C3AED), 与 favicon.svg / brand/logo.svg 一致 -->
   <defs>
     <linearGradient id="tsp-pkg" x1="4" y1="3" x2="28" y2="29" gradientUnits="userSpaceOnUse">

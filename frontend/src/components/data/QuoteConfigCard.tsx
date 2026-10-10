@@ -126,7 +126,11 @@ function IntervalEditor({ min, max, value, onChange }: {
   const [draft, setDraft] = useState(value)
   const clamped = Math.max(min, Math.min(max, draft))
   const step = min < 1 ? 0.1 : min < 3 ? 0.5 : 1
-  const presets = min <= 3 ? [3, 5, 10, 30, 60] : [5, 10, 15, 30, 60]
+  const presets = min <= 1
+    ? [1, 3, 5, 10, 30, 60]
+    : min <= 3
+      ? [3, 5, 10, 30, 60]
+      : [5, 10, 15, 30, 60]
 
   return (
     <div className="mt-2 pt-2 border-t border-border/50">

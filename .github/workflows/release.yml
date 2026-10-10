@@ -429,7 +429,7 @@ jobs:
         run: |
           brew install create-dmg
           create-dmg \
-            --volname "Tick Stock Panel" \
+            --volname "TSP" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --icon-size 100 \

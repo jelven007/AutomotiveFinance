@@ -23,11 +23,11 @@
   一次打出。任何 60s 滑动窗口至多一个脉冲 (28 < 48 安全 rpm); 单块失败不拖垮
   整轮, 失败块单独重试一次 (见 fetch_intraday_full_market_burst)。自定义源
   由 provider 自管批量与限速 (rpm 配置/内部并发), 服务不代限。
-- 稳态轮单请求: 无脉冲并发, 间隔可低至 3s; 实际节奏 = max(间隔, 单轮完成),
+- 稳态轮单请求: 无脉冲并发, 间隔可低至 1s; 实际节奏 = max(间隔, 单轮完成),
   服务端响应 ~5s 时自动退化为响应节奏, 不会重叠请求。
-- 固定节奏: 默认 6s 一轮 (clamp [3, 300]), 不补跑 (missed 轮次直接跳过);
-  仅修复轮的自定义源下限抬到 60s (全天批量打不住 6s 节奏)。
-- 仅连续竞价时段运行 (9:30-11:30 / 13:00-15:00), 午休/收盘自动暂停与恢复;
+- 固定节奏: 默认 1s 一轮 (clamp [1, 120]), 不补跑 (missed 轮次直接跳过);
+  仅修复轮的自定义源下限抬到 60s (全天批量打不住 1s 节奏)。
+- 仅在交易日 09:15-11:30 / 13:00-15:15 运行, 午休/收盘后自动暂停与恢复;
   午休后恢复因覆盖滞后会多跑一次修复轮, 幂等无害。
 - 不与其他分钟能力冲突: 与 盘后分钟同步 (kline.minute.batch) / 分时监控路径
   分属不同限流池; 落盘走 _write_minute_partition 的 unique(symbol,datetime)
@@ -49,15 +49,15 @@ from typing import Any
 
 import polars as pl
 
-from app.market_time import cn_now, cn_today, in_continuous_session
+from app.market_time import cn_now, cn_today, in_intraday_polling_window
 from app.services import preferences
 
 logger = logging.getLogger(__name__)
 
-# 轮询间隔允许范围 (秒): 稳态轮单请求无并发脉冲, 下限 3s;
+# 轮询间隔允许范围 (秒): 稳态轮单请求无并发脉冲, 下限 1s;
 # 上限 120s — universe 端点每标的只回最新 3 根, 间隔超过 3 分钟必留缺口,
 # 每轮都会触发修复轮, 稳态设计失效, 故不允许配到 120s 以上。
-REFRESH_INTERVAL_MIN = 3
+REFRESH_INTERVAL_MIN = 1
 REFRESH_INTERVAL_MAX = 120
 # 等待步长 (秒): 循环小步睡眠, 便于快速停止与偏好热生效。
 _LOOP_STEP_S = 2.0
@@ -70,9 +70,9 @@ _EMPTY_ROUNDS_TO_REPAIR = 2
 _REPAIR_ONLY_MIN_INTERVAL_S = 60
 
 
-def _in_continuous_session(now=None) -> bool:
-    """A股连续竞价时段 (北京时间): 9:30-11:30 / 13:00-15:00, 仅工作日。"""
-    return in_continuous_session(now)
+def _in_refresh_window(now=None) -> bool:
+    """盘中分钟增量窗口: 09:15-11:30 / 13:00-15:15, 仅工作日。"""
+    return in_intraday_polling_window(now)
 
 
 @dataclass
@@ -102,6 +102,7 @@ class MinuteRefreshService:
         self._state = _RefreshState()
         self._round_lock = threading.Lock()  # 同时只允许一轮 (手动触发与定时轮互斥)
         self._empty_rounds = 0               # 连续空轮计数 (escalate 到全天修复)
+        self._provider_unavailable_log_key: tuple[str, str] | None = None
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -170,10 +171,16 @@ class MinuteRefreshService:
 
         name = self.active_provider()
         if name == "tickflow":
+            self._provider_unavailable_log_key = None
             return (None, "tickflow")
         provider, _, err = kline_sync._resolve_full_minute_provider(name)
         if err is not None:
-            logger.warning("full_minute provider %s unavailable: %s", name, err)
+            log_key = (name, str(err))
+            if getattr(self, "_provider_unavailable_log_key", None) != log_key:
+                logger.warning("full_minute provider %s unavailable: %s", name, err)
+                self._provider_unavailable_log_key = log_key
+        else:
+            self._provider_unavailable_log_key = None
         return (provider, name)
 
     def _custom_supports_increment(self, provider: object) -> bool:
@@ -182,7 +189,7 @@ class MinuteRefreshService:
 
     def repair_only(self) -> bool:
         """当前生效源只能全天修复轮 (无廉价增量端点) — 节奏下限抬到 60s。"""
-        provider, name = self._resolve_custom()
+        provider, _ = self._resolve_custom()
         return provider is not None and not self._custom_supports_increment(provider)
 
     def _effective_interval(self) -> int:
@@ -198,7 +205,7 @@ class MinuteRefreshService:
             return "disabled"
         if not self.capability_ok():
             return "capability"
-        if not _in_continuous_session():
+        if not _in_refresh_window():
             return "outside_trading_hours"
         # 节假日 (工作日但休市): 周几门控覆盖不到, 由交易日探针剔除。
         # 未知 (None) 维持现状 — 空轮升级机制兜底 (探针失灵时的第二道防线)。
@@ -393,7 +400,7 @@ class MinuteRefreshService:
             "repair_only": self.repair_only(),
             "interval_seconds": preferences.get_minute_refresh_interval(),
             "capability_ok": self.capability_ok(),
-            "in_trading_hours": _in_continuous_session(),
+            "in_trading_hours": _in_refresh_window(),
             "gate_reason": gate if (enabled and running) else (gate or "disabled"),
             "rounds": self._state.rounds,
             "last_round_at": self._state.last_round_at,

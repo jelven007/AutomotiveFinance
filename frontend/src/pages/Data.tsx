@@ -253,7 +253,7 @@ export function Data() {
   const quoteInterval = useQuoteInterval()
   const updateInterval = useUpdateQuoteInterval()
 
-  const realtimeEnabled = prefs.data?.realtime_quotes_enabled ?? false
+  const realtimeEnabled = prefs.data?.realtime_quotes_enabled ?? true
   const quoteStatus = useQuoteStatus()
   const toggleQuote = useToggleRealtimeQuotes()
 
@@ -721,8 +721,8 @@ export function Data() {
             running={quoteStatus.data?.running ?? false}
             isTrading={quoteStatus.data?.is_trading_hours ?? false}
             lastFetchMs={quoteStatus.data?.last_fetch_ms ?? null}
-            intervalS={quoteInterval.data?.interval ?? quoteStatus.data?.interval_s ?? 6}
-            intervalMin={quoteInterval.data?.min_interval ?? 6}
+            intervalS={quoteInterval.data?.interval ?? quoteStatus.data?.interval_s ?? 1}
+            intervalMin={quoteInterval.data?.min_interval ?? 1}
             intervalMax={quoteInterval.data?.max_interval ?? 60}
             loading={quoteStatus.isLoading}
             onToggle={(v) => toggleQuote.mutate(v)}

@@ -1,7 +1,7 @@
-<!-- Tick Stock Panel · 方案 0 正式主标 — 亮紫渐变 · 透明底 · 全直角
+<!-- TSP · 方案 0 正式主标 — 亮紫渐变 · 透明底 · 全直角
      变体: 渐变·深底 (终端 / 暗色 UI)
      与 logo.svg 同几何, 仅渐变换为深底优化亮度 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 57.6" fill="none" role="img" aria-label="Tick Stock Panel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 57.6" fill="none" role="img" aria-label="TSP">
   <defs>
     <linearGradient id="tsp-grad-dark" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#C4B5FD"/>

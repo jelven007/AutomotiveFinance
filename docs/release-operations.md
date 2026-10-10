@@ -17,7 +17,7 @@
 | 产物 | 自动化 | 触发 | 说明 |
 | --- | --- | --- | --- |
 | CI 结果 | `.github/workflows/ci.yml` | push/PR 到 `main` | 后端全量测试；前端 test、lint、build |
-| GHCR 镜像 | `.github/workflows/docker.yml` | `main` CI 成功、`v*` tag、手动 | `linux/amd64`、`linux/arm64` |
+| 容器镜像 | `.github/workflows/docker.yml` | `main` CI 成功、`v*` tag、手动 | 发布到当前仓库配置的 GHCR；使用前必须核验可见性与 digest |
 | 桌面安装包 | `.github/workflows/release.yml` | 手动且质量门通过 | Windows x64、macOS ARM64、Linux x64 |
 | GitHub Release | 桌面发布 workflow | 手动 | 允许分平台追加资产 |
 | 更新清单 | `latest.json` | 桌面产物后 | 仅列实际存在资产及 SHA-256 |
@@ -40,7 +40,7 @@
 - `backend/app/__init__.py` 的 fallback
 - 根目录 `VERSION`
 
-桌面发布输入使用带 `v` 前缀的版本，例如 `v0.3.3`。workflow 会校验它与
+桌面发布输入使用带 `v` 前缀的版本，例如 `v0.3.11`。workflow 会校验它与
 `frontend/package.json` 一致，不一致时失败。
 
 版本升级至少检查：
@@ -122,11 +122,13 @@ rg -n '0\.3\.3|version' \
 示例：
 
 ```bash
-docker pull ghcr.io/shy3130/tick-stock-panel:<commit-sha>
-docker image inspect ghcr.io/shy3130/tick-stock-panel:<commit-sha>
+export IMAGE_REF='ghcr.io/jelven007/tsp'
+docker pull "${IMAGE_REF}:<commit-sha>"
+docker image inspect "${IMAGE_REF}:<commit-sha>"
 ```
 
-实际 SHA 标签格式以 workflow 产物为准。
+镜像名称、可见性和实际 SHA 标签格式以当前仓库 workflow 产物为准。未核验成功前，
+部署文档和发布说明不得把该镜像写成可用入口。
 
 ### 7.2 稳定版本
 
@@ -146,7 +148,7 @@ docker image inspect ghcr.io/shy3130/tick-stock-panel:<commit-sha>
 
 ```bash
 gh workflow run release.yml \
-  -f version=v0.3.9 \
+  -f version=v0.3.11 \
   -f platforms=windows \
   -f prerelease=false
 ```

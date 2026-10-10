@@ -9,7 +9,7 @@
   - _enriched_cache 是唯一的盘中数据源 (OHLCV + 全套技术指标)
   - _live_agg_cache 是递推状态 (只加载一次, 盘中不变)
 
-数据流 (每轮 ~15s):
+数据流 (默认每秒发起一轮, 实际周期还包含本轮拉取耗时):
   1. API 拉取 → raw_records (临时变量)
   2. raw_records → 写 kline_daily (不复权原始价格)
   3. raw_records → 更新 _enriched_cache 的 OHLCV
@@ -33,7 +33,12 @@ from datetime import date, datetime, time as dt_time
 
 import polars as pl
 
-from app.market_time import CN_TZ, cn_now, cn_today
+from app.market_time import (
+    CN_TZ,
+    cn_now,
+    cn_today,
+    in_intraday_polling_window,
+)
 from app.parquet import scan_daily_parquet
 from app.polars_guard import guarded_collect
 from app.services.index_const import CORE_INDEX_SYMBOLS
@@ -51,11 +56,11 @@ SOURCE_LABELS = {
 # final 定版确认容差: 快照时间戳允许早于边界 5s 内 (供应商时间戳精度不一)
 _FINAL_CONFIRM_SLACK_MS = 5_000
 
-# final 定版边界与重试窗口终点 (北京时间)。收盘窗口终点 15:30, 恰与盘后管道
-# 启动同时: 管道运行期间轮询本就被暂停, 此后未确认的定版不再写盘, 当日分区
-# 由管道按官方日线值级校正 —— 避免定版重试与权威重建互相覆盖。
+# final 定版边界与重试窗口终点 (北京时间)。自动轮询仅使用 close_final:
+# 收盘后继续轮询至 15:15, 随后停止; morning_final 保留给兼容调用。
+# 未确认的收盘定版由 15:35 盘后管道按官方日线值级校正。
 _FINAL_BOUNDARY = {"morning_final": dt_time(11, 30), "close_final": dt_time(15, 0)}
-_FINAL_DEADLINE = {"morning_final": dt_time(12, 10), "close_final": dt_time(15, 30)}
+_FINAL_DEADLINE = {"morning_final": dt_time(12, 10), "close_final": dt_time(15, 15)}
 
 
 def _body_with_quote(body: str, ev: dict) -> str:
@@ -208,14 +213,15 @@ class QuoteService:
 
     # 档位 → 最小轮询间隔 (秒) — TickFlow 档位限速保护, 仅实时源为 tickflow 时适用
     TIER_MIN_INTERVAL = {
+        "none": 6.0,
         "expert": 1.0,
         "pro": 3.0,
         "starter": 6.0,
         "free": 6.0,
     }
-    # 插件/自定义源: 不受 TickFlow 档位保护约束, 通用下限 1s (默认间隔仍为 DEFAULT_INTERVAL)
+    # 插件/自定义源: 不受 TickFlow 档位保护约束, 通用下限与默认间隔均为 1s
     CUSTOM_PROVIDER_MIN_INTERVAL = 1.0
-    DEFAULT_INTERVAL = 6.0
+    DEFAULT_INTERVAL = 1.0
     MAX_INTERVAL = 60.0
 
     def __init__(self) -> None:
@@ -260,15 +266,14 @@ class QuoteService:
         self._index_quotes_cache: pl.DataFrame | None = None
         self._intraday_signal_evaluator = IntradaySignalEvaluator()
         self._intraday_signal_bucket: dict[str, str] = {}
-        # 午休/收盘最终同步状态: 到边界后必须成功拉取一版行情, 再进入休盘态。
+        # 收盘最终同步状态: 15:00 后的轮询会确认边界快照, 15:15 到点停止。
         self._final_sync_done: set[tuple[date, str]] = set()
         self._final_sync_failed: dict[tuple[date, str], str] = {}
         # 最近一次 final 定版拉取是否取得边界后快照 (None=非 final 拉取)
         self._last_final_confirmed: bool | None = None
         self._holiday_active = False  # 交易日探针当前是否判休市 (日志去重)
         # 轮询放量 (volume_delta 规则): 上一轮全市场股票快照的 (累计成交量[手], 累计成交额[元])。
-        # 每轮全量快照后更新 (含非连续竞价时段, 保证 13:00 恢复时 prev 是 12:59
-        # 而非 11:30); 跨交易日清空; cur < prev (数据源重置) 时丢弃该轮差值。
+        # 每轮全量快照后更新; 跨交易日清空; cur < prev (数据源重置) 时丢弃该轮差值。
         self._prev_stock_volume: dict[str, tuple[float, float]] | None = None
         self._prev_volume_fetched_at: float | None = None   # epoch 毫秒
         self._prev_volume_date: date | None = None
@@ -580,7 +585,7 @@ class QuoteService:
             "index_symbol_count": self._index_symbol_count,
             "etf_symbol_count": self._etf_symbol_count,
             "quote_age_ms": round(age, 0) if age >= 0 else None,
-            # 交易时段 = 连续竞价; polling_window 另行返回,避免午休/收盘缓冲误显示为交易中。
+            # 交易时段 = 连续竞价; polling_window 另行返回,避免竞价预热/收盘定版误显示为交易中。
             "is_trading_hours": self._is_continuous_trading(),
             "is_polling_window": self._should_poll_for_phase(phase),
             "market_phase": phase,
@@ -624,13 +629,24 @@ class QuoteService:
                             key = self._final_sync_key(phase)
                             label = "午休" if phase == "morning_final" else "收盘"
                             if key and ok and self._last_final_confirmed:
+                                first_confirmation = key not in self._final_sync_done
                                 self._final_sync_done.add(key)
                                 self._final_sync_failed.pop(key, None)
-                                logger.info("%s 最终行情同步完成 (快照时间戳已达边界), 进入休盘态", label)
+                                if first_confirmation:
+                                    if phase == "close_final":
+                                        logger.info(
+                                            "%s 最终行情同步已确认, 继续轮询至 15:15",
+                                            label,
+                                        )
+                                    else:
+                                        logger.info(
+                                            "%s 最终行情同步完成 (快照时间戳已达边界), 进入休盘态",
+                                            label,
+                                        )
                             elif key and self._past_final_deadline(phase):
                                 # 重试窗口结束仍未取得边界后快照: 接受现状停止轮询。
                                 # 实测有实时源收盘后长期返回竞价前旧价 (快照时间戳可信但价格不更新),
-                                # 此时盲目落盘只会固化旧价 —— 交由 15:30 盘后管道按官方日线校正。
+                                # 此时盲目落盘只会固化旧价 —— 交由 15:35 盘后管道按官方日线校正。
                                 self._final_sync_done.add(key)
                                 self._final_sync_failed[key] = (
                                     "fetch_failed" if not ok else "unconfirmed_snapshot"
@@ -1096,23 +1112,20 @@ class QuoteService:
     def _market_phase() -> str:
         """A股行情轮询阶段(北京时间)。
 
-        final 阶段用于午休/收盘定版: 需要至少成功拉取一版边界后的行情, 才算进入休盘。
+        只在 09:15-11:30 / 13:00-15:15 双时段内返回可轮询阶段。
+        close_final 用于 15:00 后确认收盘边界快照。
         """
         now = cn_now()
-        if now.weekday() >= 5:
+        if not in_intraday_polling_window(now):
             return "closed"
         t = now.time()
         if dt_time(9, 15) <= t < dt_time(9, 30):
             return "preopen"
         if dt_time(9, 30) <= t < dt_time(11, 30):
             return "morning"
-        if dt_time(11, 30) <= t < dt_time(12, 55):
-            return "morning_final"
-        if dt_time(12, 55) <= t < dt_time(13, 0):
-            return "pre_afternoon"
         if dt_time(13, 0) <= t < dt_time(15, 0):
             return "afternoon"
-        if t >= dt_time(15, 0):
+        if dt_time(15, 0) <= t < dt_time(15, 15):
             return "close_final"
         return "closed"
 
@@ -1155,22 +1168,23 @@ class QuoteService:
         return not holiday
 
     def _should_poll_for_phase(self, phase: str) -> bool:
-        """是否处于会主动拉行情的阶段。final 阶段成功后即停止。
+        """是否处于会主动拉行情的阶段。
 
         节假日 (工作日但休市) 由交易日探针剔除 — 周几门控覆盖不到的部分。
         """
         if not self._holiday_gate():
             return False
-        if phase in {"preopen", "morning", "pre_afternoon", "afternoon"}:
+        if phase in {"preopen", "morning", "afternoon"}:
             return True
-        key = self._final_sync_key(phase)
-        return bool(key and key not in self._final_sync_done)
+        if phase == "close_final":
+            return cn_now().time() < _FINAL_DEADLINE["close_final"]
+        return False
 
     def _should_fetch_for_phase(self, phase: str) -> bool:
         return self._should_poll_for_phase(phase)
 
     def _is_trading_hours(self) -> bool:
-        """行情轮询窗口(兼容旧调用): 包含盘前预热和未完成的午休/收盘定版。"""
+        """行情轮询窗口(兼容旧调用): 包含盘前预热和收盘定版。"""
         return self._should_poll_for_phase(self._market_phase())
 
     @staticmethod

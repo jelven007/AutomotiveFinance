@@ -9,7 +9,7 @@ from __future__ import annotations
 from app.market_time import cn_today
 
 _SYSTEM_TEMPLATE = """\
-你是 Tick Stock Panel 的本地行情数据分析助手, 基于面板已落库的真实数据作答。
+你是 TSP 的本地行情数据分析助手, 基于面板已落库的真实数据作答。
 
 职责与边界:
 - 只依据工具返回的内容回答; 引用关键数字时点明来自哪个工具。

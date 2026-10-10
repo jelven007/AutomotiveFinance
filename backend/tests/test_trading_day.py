@@ -269,7 +269,7 @@ def test_minute_refresh_gate_returns_holiday(monkeypatch):
     """周几+时段门控放行 (周一盘中) 但探针判休市 → holiday。"""
     svc = _minute_service(monkeypatch)
     monkeypatch.setattr(
-        "app.services.minute_refresh._in_continuous_session", lambda now=None: True
+        "app.services.minute_refresh._in_refresh_window", lambda now=None: True
     )
     monkeypatch.setattr(trading_day, "is_trading_day", lambda now=None: False)
     assert svc._gate_reason() == "holiday"
@@ -278,7 +278,7 @@ def test_minute_refresh_gate_returns_holiday(monkeypatch):
 def test_minute_refresh_gate_passes_when_trading(monkeypatch):
     svc = _minute_service(monkeypatch)
     monkeypatch.setattr(
-        "app.services.minute_refresh._in_continuous_session", lambda now=None: True
+        "app.services.minute_refresh._in_refresh_window", lambda now=None: True
     )
     monkeypatch.setattr(trading_day, "is_trading_day", lambda now=None: True)
     assert svc._gate_reason() is None

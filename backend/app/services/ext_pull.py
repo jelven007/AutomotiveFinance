@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from app.market_time import CN_TZ, cn_now, cn_today
+from app.market_time import CN_TZ, cn_now, cn_today, in_intraday_polling_window
 from app.services.ext_data import (
     ExtConfig,
     ExtConfigStore,
@@ -25,7 +25,7 @@ _MARKET_HOURS_PRESET_IDS = frozenset({"ext_gn_ths", "ext_hy_ths"})
 def outbound_headers(user_headers: dict[str, str] | None = None) -> dict[str, str]:
     """扩展数据出站请求的默认标识头。
 
-    默认携带 User-Agent: tsp/<版本> 与 X-TSP-Client: tick-stock-panel,
+    默认携带 User-Agent: tsp/<版本> 与 X-TSP-Client: tsp,
     供服务端 (如 tickflow-hub) 识别本项目的请求。用户在拉取配置里显式
     设置的同名头优先 (大小写不敏感), 不被标识头覆盖。
     """
@@ -33,7 +33,7 @@ def outbound_headers(user_headers: dict[str, str] | None = None) -> dict[str, st
 
     defaults = {
         "User-Agent": f"tsp/{__version__}",
-        "X-TSP-Client": "tick-stock-panel",
+        "X-TSP-Client": "tsp",
     }
     override = {k.lower() for k in (user_headers or {})}
     return {
@@ -71,8 +71,9 @@ def _scheduled_pull_skip_reason(
     """返回本轮定时拉取的跳过原因; None 表示允许执行。
 
     内置概念/行业预设在服务启动后的首轮无条件执行, 确保休市或盘后重启也能
-    立即得到一份最新快照。后续轮次仅在配置时间窗口内且交易日探针明确返回
-    True 时执行; 未知状态按休市处理, 避免节假日持续请求上游。
+    立即得到一份最新快照。后续轮次仅在 09:15-11:30 / 13:00-15:15
+    双时段内且交易日探针明确返回 True 时执行; 未知状态按休市处理,
+    避免节假日持续请求上游。
 
     其他扩展源保持原有语义, 只受用户配置的时间窗口约束。
     """
@@ -80,10 +81,10 @@ def _scheduled_pull_skip_reason(
     if is_market_hours_preset and is_startup_run:
         return None
 
-    if not _in_time_window(pull.time_window_start, pull.time_window_end):
-        return "不在拉取时间窗口内"
-
     if is_market_hours_preset:
+        if not in_intraday_polling_window(cn_now()):
+            return "不在拉取时间窗口内"
+
         from app.services import trading_day
 
         verdict = trading_day.is_trading_day()
@@ -91,6 +92,8 @@ def _scheduled_pull_skip_reason(
             return "非交易日"
         if verdict is None:
             return "交易日状态未知"
+    elif not _in_time_window(pull.time_window_start, pull.time_window_end):
+        return "不在拉取时间窗口内"
 
     return None
 

@@ -269,6 +269,36 @@ class MootdxClient:
     def finance(self, code: str) -> list[dict]:
         return _records(self._invoke("get_finance_info", *_security(code), client_method=True))
 
+    def company_info(self, code: str, category_name: str) -> str | None:
+        """Read one TDX F10 category by its display name."""
+        market, raw_code = _security(code)
+        categories = self._invoke(
+            "get_company_info_category",
+            market,
+            raw_code,
+            client_method=True,
+        ) or []
+        category = next(
+            (
+                item
+                for item in categories
+                if str(item.get("name") or "").strip() == category_name
+            ),
+            None,
+        )
+        if category is None:
+            return None
+        content = self._invoke(
+            "get_company_info_content",
+            market=market,
+            code=raw_code,
+            filename=category["filename"],
+            start=category["start"],
+            length=category["length"],
+            client_method=True,
+        )
+        return str(content) if content is not None else None
+
     def stocks(self, market: int) -> list[dict]:
         """Read a complete market list without mootdx's progress-bar wrapper."""
         if market == 2:

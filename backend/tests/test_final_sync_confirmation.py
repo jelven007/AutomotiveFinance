@@ -6,7 +6,7 @@
 
 - _process_full_market_records 收到 final_boundary_ms 时, 快照最大时间戳
   达到边界 (含容差) 才落盘/评估监控, 否则只更新展示缓存;
-- _final_boundary_ms/_past_final_deadline 提供边界与重试窗口 (收盘 15:00/15:30)。
+- _final_boundary_ms/_past_final_deadline 提供边界与重试窗口 (收盘 15:00/15:15)。
 """
 from __future__ import annotations
 
@@ -139,11 +139,51 @@ def test_past_final_deadline(monkeypatch) -> None:
     def _at(h: int, m: int):
         return datetime.combine(cn_today(), dt_time(h, m), tzinfo=CN_TZ)
 
-    monkeypatch.setattr(qs_module, "cn_now", lambda: _at(15, 29))
+    monkeypatch.setattr(qs_module, "cn_now", lambda: _at(15, 14))
     assert QuoteService._past_final_deadline("close_final") is False
-    monkeypatch.setattr(qs_module, "cn_now", lambda: _at(15, 30))
+    monkeypatch.setattr(qs_module, "cn_now", lambda: _at(15, 15))
     assert QuoteService._past_final_deadline("close_final") is True
     monkeypatch.setattr(qs_module, "cn_now", lambda: _at(12, 9))
     assert QuoteService._past_final_deadline("morning_final") is False
     monkeypatch.setattr(qs_module, "cn_now", lambda: _at(12, 11))
     assert QuoteService._past_final_deadline("morning_final") is True
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected"),
+    [
+        (9, 14, False),
+        (9, 15, True),
+        (11, 29, True),
+        (11, 30, False),
+        (12, 59, False),
+        (13, 0, True),
+        (15, 14, True),
+        (15, 15, False),
+    ],
+)
+def test_realtime_polling_uses_two_intraday_windows(
+    monkeypatch,
+    hour: int,
+    minute: int,
+    expected: bool,
+) -> None:
+    weekday = datetime(2026, 10, 12, hour, minute, tzinfo=CN_TZ)
+    monkeypatch.setattr(qs_module, "cn_now", lambda: weekday)
+    qs = QuoteService()
+    monkeypatch.setattr(qs, "_holiday_gate", lambda: True)
+
+    assert qs._should_poll_for_phase(qs._market_phase()) is expected
+
+
+def test_close_polling_continues_after_final_confirmation_until_1515(monkeypatch) -> None:
+    monkeypatch.setattr(
+        qs_module,
+        "cn_now",
+        lambda: datetime(2026, 10, 12, 15, 10, tzinfo=CN_TZ),
+    )
+    qs = QuoteService()
+    qs._final_sync_done.add((cn_today(), "close"))
+    monkeypatch.setattr(qs, "_holiday_gate", lambda: True)
+
+    assert qs._should_poll_for_phase("close_final") is True

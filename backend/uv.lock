@@ -2512,7 +2512,7 @@ all = [
 ]
 
 [[package]]
-name = "tickflow-stock-panel-backend"
+name = "tsp-backend"
 version = "0.3.11"
 source = { editable = "." }
 dependencies = [

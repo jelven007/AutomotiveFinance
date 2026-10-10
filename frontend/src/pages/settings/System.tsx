@@ -461,14 +461,14 @@ export function SettingsSystemPanel() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <a
-              href="https://tsp.shy313.com/"
+              href="https://github.com/jelven007/TSP"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn text-xs
                          bg-elevated text-secondary hover:text-foreground transition-colors"
             >
               <ExternalLink className="h-3.5 w-3.5" />
-              官网
+              项目主页
             </a>
             {updateState === 'found' && updateInfo && (
               <a

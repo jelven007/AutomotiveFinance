@@ -3,7 +3,7 @@
 下限语义 (中立能力原则):
 - 实时源路由到插件/自定义源时, TickFlow 档位限速保护不适用 → 通用下限 1s;
 - 实时源为 tickflow 时, 仍按当前订阅档位查表 (none/free=6s, starter=6s, pro=3s, expert=1s);
-- 默认间隔 6s 不因路由变化而改变 (只放宽下限, 不动存量偏好)。
+- 默认间隔为 1s; 数据源下限更高时仍由运行时 clamp。
 """
 from __future__ import annotations
 
@@ -43,6 +43,6 @@ def test_tickflow_tier_floor_unchanged(monkeypatch):
         assert _bare().get_min_interval() == expect, tier
 
 
-def test_default_interval_unchanged():
-    """默认间隔仍是 6s — 放宽的只是下限, 不是默认值。"""
-    assert QuoteService.DEFAULT_INTERVAL == 6.0
+def test_default_interval_is_one_second():
+    """未保存自定义偏好时, 实时行情默认每秒拉取一轮。"""
+    assert QuoteService.DEFAULT_INTERVAL == 1.0

@@ -1,4 +1,4 @@
-"""Tick Stock Panel backend."""
+"""TSP backend."""
 
 import json
 import sys

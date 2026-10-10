@@ -2250,10 +2250,6 @@ export const api = {
   clearAiSettings: () =>
     request<{ ok: boolean }>('/api/settings/ai', { method: 'DELETE' }),
 
-  /** 赞助商(RunningHub)模型列表(后端代理, 规避其网关按 Origin 过滤) */
-  sponsorModels: () =>
-    request<{ models: string[] }>('/api/settings/ai/sponsor-models'),
-
   // ===== API Token 管理 (开放层; 仅 UI 会话可达) =====
   apiTokensList: () =>
     request<{ tokens: ApiTokenRecord[] }>('/api/settings/api-tokens'),

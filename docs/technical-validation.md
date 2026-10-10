@@ -52,7 +52,7 @@ manifest 是不可变的追溯清单, 底层数据仍可变化。发布锁保护
 | --- | --- |
 | 数据源 | 删除 stock-sdk 插件、Node bridge、专属测试、Docker 构建参数和全部入口；保留 TickFlow、mootdx、fuyao 与自定义源 |
 | 设置页 | 能力路由移除整组“恢复默认”；数据源图例由“芯片”改为“说明” |
-| AI 设置 | 预设收敛为自定义、RunningHub、OpenAI、DeepSeek、GLM、Codex CLI；移除通义千问和 Kimi 独立预设，并统一 GPT/GLM 展示名称 |
+| AI 设置 | 预设收敛为自定义、OpenAI、DeepSeek、GLM、Codex CLI；移除推广型预设及专用模型代理，已有兼容地址继续按自定义配置读取 |
 | 数据发布 | 新增不可变 data release manifest、Provider 路由审计和发布 generation 一致性检查 |
 | 回测追溯 | 信号、因子、批量因子和策略回测返回 provenance，并持久化配置、数据 release、generation、统计和策略源码哈希 |
 | 健康检查 | 新增 `/health/live`、`/health/ready` 与 `/api/health`；Docker HEALTHCHECK 使用 readiness |

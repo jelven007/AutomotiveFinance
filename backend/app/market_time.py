@@ -17,6 +17,13 @@ _MORNING_END = dt_time(11, 30)
 _AFTERNOON_START = dt_time(13, 0)
 _AFTERNOON_END = dt_time(15, 0)
 
+# 盘中常驻拉取窗口: 竞价预热从 09:15 开始, 收盘定版延续到 15:15。
+# 结束边界采用半开区间, 11:30 与 15:15 到点即停。
+_INTRADAY_POLL_MORNING_START = dt_time(9, 15)
+_INTRADAY_POLL_MORNING_END = dt_time(11, 30)
+_INTRADAY_POLL_AFTERNOON_START = dt_time(13, 0)
+_INTRADAY_POLL_AFTERNOON_END = dt_time(15, 15)
+
 
 def cn_now() -> datetime:
     """当前北京时间 (带时区)。"""
@@ -34,6 +41,18 @@ def in_continuous_session(now: datetime | None = None) -> bool:
     return now.weekday() < 5 and (
         _MORNING_START <= now.time() <= _MORNING_END
         or _AFTERNOON_START <= now.time() <= _AFTERNOON_END
+    )
+
+
+def in_intraday_polling_window(now: datetime | None = None) -> bool:
+    """盘中常驻拉取窗口: 09:15-11:30 / 13:00-15:15, 仅工作日。
+
+    节假日由调用方通过交易日探针判断; 本函数只负责北京时间、周末和双时段边界。
+    """
+    now = now or cn_now()
+    return now.weekday() < 5 and (
+        _INTRADAY_POLL_MORNING_START <= now.time() < _INTRADAY_POLL_MORNING_END
+        or _INTRADAY_POLL_AFTERNOON_START <= now.time() < _INTRADAY_POLL_AFTERNOON_END
     )
 
 
@@ -87,4 +106,3 @@ def trading_minutes_elapsed_from_ts(ts_ms: int | float | None) -> float:
     except (ValueError, TypeError, OSError):
         return float(_TRADING_TOTAL_MINUTES)
     return trading_minutes_elapsed_from_dt(dt)
-

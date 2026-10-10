@@ -1,6 +1,6 @@
-<!-- Tick Stock Panel 品牌 logo — 纯白版, 透明底, 全直角 (无圆角/圆笔帽)
+<!-- TSP 品牌 logo — 纯白版, 透明底, 全直角 (无圆角/圆笔帽)
      用法: 深色/品牌色背景上 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Tick Stock Panel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="TSP">
   <path d="M20 9 H11 V55 H20"
         stroke="#FFFFFF" stroke-width="5" stroke-linejoin="miter" stroke-linecap="butt"/>
   <path d="M44 9 H53 V55 H44"

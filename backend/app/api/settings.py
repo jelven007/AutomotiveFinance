@@ -389,29 +389,6 @@ def clear_ai_settings() -> dict:
     return {"ok": True}
 
 
-@router.get("/ai/sponsor-models")
-async def list_sponsor_models() -> dict:
-    """代理获取赞助商(RunningHub)的模型列表。
-
-    其网关按 Origin 头过滤: 浏览器跨域请求只会拿到国产模型子集,
-    服务端请求无 Origin 头可取全量, 故由后端代理转发。
-    """
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            res = await client.get("https://llm.runninghub.ai/v1/models")
-            res.raise_for_status()
-            data = res.json()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"获取模型列表失败: {exc}") from exc
-    models = sorted({
-        item.get("id") for item in data.get("data", [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
-    })
-    return {"models": models}
-
-
 # ===== 偏好设置 =====
 
 def _realtime_allowed() -> bool:
@@ -1111,7 +1088,7 @@ class RealtimeMonitorConfigIn(BaseModel):
     screener_auto_run: bool | None = None
     minute_intraday_refresh: bool | None = None
     minute_intraday_refresh_interval: int | None = None
-    # 盘中分钟增量落盘 (Expert 专有) — 交易时段常驻服务, 归实时监控配置
+    # 盘中分钟增量落盘 — 按全量分钟能力路由的双时段常驻服务, 归实时监控配置
     minute_refresh_enabled: bool | None = None
     minute_refresh_interval: int | None = None
     monitor_ext_fields: dict | None = None
@@ -1400,7 +1377,7 @@ def test_webhook(req: WebhookTestIn) -> dict:
     from app.services import preferences
     from app.services import webhook_adapter
 
-    title = "TickFlow Stock Panel 推送测试"
+    title = "TSP 推送测试"
     body = "如果你看到这条消息，说明推送配置正确 🎉"
 
     if req.channel == "feishu":
@@ -1554,7 +1531,7 @@ def update_quote_interval(req: QuoteIntervalIn, request: Request) -> dict:
     """更新行情轮询间隔。按档位自动 clamp。"""
     qs = getattr(request.app.state, "quote_service", None)
     if not qs:
-        return {"interval": req.interval, "min_interval": 6.0, "max_interval": 60.0}
+        return {"interval": req.interval, "min_interval": 1.0, "max_interval": 60.0}
     clamped = qs.set_interval(req.interval)
     return {
         "interval": clamped,
@@ -1568,7 +1545,7 @@ def get_quote_interval(request: Request) -> dict:
     """获取当前行情轮询间隔和档位限制。"""
     qs = getattr(request.app.state, "quote_service", None)
     if not qs:
-        return {"interval": 6.0, "min_interval": 6.0, "max_interval": 60.0}
+        return {"interval": 1.0, "min_interval": 1.0, "max_interval": 60.0}
     return {
         "interval": qs._interval,
         "min_interval": qs.get_min_interval(),

@@ -523,7 +523,7 @@ function DatasetDetail({
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[10px] uppercase tracking-widest text-muted">响应参数字段映射</div>
                 <a
-                  href="https://github.com/shy3130/tickflow-stock-panel/blob/main/docs/custom-data-source.md#用-ai-生成映射配置"
+                  href="https://github.com/jelven007/TSP/blob/main/docs/custom-data-source.md#用-ai-生成映射配置"
                   target="_blank"
                   rel="noreferrer"
                   className="text-[10px] text-accent/70 hover:text-accent hover:underline"

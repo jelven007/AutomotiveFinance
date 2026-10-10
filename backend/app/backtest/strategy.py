@@ -1221,7 +1221,7 @@ class StrategyBacktestService:
 
         if s.execution_backend == "minute_filter":
             # 分钟策略回测: 逐交易日回放 filter_minute_history (与实盘选股同源),
-            # 信号分钟收盘价入场, 之后复用日K矩阵模拟的离场与组合管理。
+            # 依策略 META 在信号分钟收盘或下一分钟开盘入场, 之后复用日K离场。
             return self._run_minute_backtest(
                 config, s, params, overrides,
                 stop_loss=stop_loss,
@@ -1959,6 +1959,7 @@ class StrategyBacktestService:
         score = np.zeros(shape, dtype=np.float32)
         entry_price_override = np.full(shape, np.nan, dtype=np.float32)
         trigger_times: dict[tuple[str, date], str] = {}
+        signal_times: dict[tuple[str, date], str] = {}
         dropped_axis_hits = 0
         for hit in replay.hits:
             time_id = time_index.get(hit.trade_date)
@@ -1970,6 +1971,8 @@ class StrategyBacktestService:
             score[time_id, asset_id] = hit.score
             entry_price_override[time_id, asset_id] = hit.entry_price
             trigger_times[(hit.symbol, hit.trade_date)] = hit.trigger_time
+            if hit.signal_time:
+                signal_times[(hit.symbol, hit.trade_date)] = hit.signal_time
         raw_candidates = int(entry.sum())
         entry.setflags(write=False)
         score.setflags(write=False)
@@ -2008,7 +2011,7 @@ class StrategyBacktestService:
             score_max=score_max,
             initial_capital=config.initial_capital,
             position_sizing=config.position_sizing,
-            # 分钟策略的成交价由 entry_price_override 提供 (触发分钟收盘),
+            # 分钟策略的成交价由回放器按 minute_entry_fill 生成并覆盖,
             # 不再叠加日线口径的分钟成交细化。
             minute_fill=False,
         )
@@ -2060,6 +2063,7 @@ class StrategyBacktestService:
 
         execution = result.stats.get("execution") or {}
         execution["buy_limit_up"] = int(execution.get("buy_limit_up", 0)) + replay.buy_limit_up
+        execution["buy_no_next_minute"] = replay.buy_no_next_minute
         result.stats["execution"] = execution
         timing_ms["total"] = round((time.perf_counter() - t0) * 1000, 1)
         result.stats["timing_ms"] = timing_ms
@@ -2078,6 +2082,7 @@ class StrategyBacktestService:
             "skipped_days": [str(day) for day in replay.skipped_days[:50]],
             "skipped_day_count": len(replay.skipped_days),
             "dropped_axis_hits": dropped_axis_hits,
+            "entry_fill": s.meta.get("minute_entry_fill", "signal_close"),
         }
 
         benchmark_curve = (
@@ -2119,6 +2124,9 @@ class StrategyBacktestService:
             trigger = trigger_times.get(key)
             if trigger:
                 trade["entry_date"] = f"{entry_text[:10]} {trigger}"
+            signal_time = signal_times.get(key)
+            if signal_time:
+                trade["entry_signal_date"] = f"{entry_text[:10]} {signal_time}"
 
         selected_stats = result_policy.select_stats(result.stats)
         elapsed = (time.perf_counter() - t0) * 1000

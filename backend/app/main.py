@@ -100,7 +100,7 @@ if not getattr(sys, "frozen", False):
 @asynccontextmanager
 async def _application_lifespan(app: FastAPI):
     logger.info(
-        "Tick Stock Panel v%s starting (mode=%s)",
+        "TSP v%s starting (mode=%s)",
         __version__, tf_client.current_mode(),
     )
 
@@ -216,7 +216,7 @@ async def _application_lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("depth_service init failed: %s", e)
 
-    # 盘中分钟增量刷新 (Expert 专有): 线程常驻, 开关/时段/能力门控在循环内每轮判断
+    # 盘中分钟增量刷新: 线程常驻, 开关/双时段/全量分钟能力门控在循环内每轮判断
     try:
         from app.services.minute_refresh import MinuteRefreshService
         minute_refresh = MinuteRefreshService(repo)
@@ -438,7 +438,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Tick Stock Panel",
+    title="TSP",
     version=__version__,
     description="A 股选股 + 回测面板 — TickFlow 适配",
     lifespan=lifespan,

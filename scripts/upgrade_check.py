@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         conflicts = _merge_tree_conflicts(root, base, current, target)
         dirty = sorted(_lines(_git(root, "status", "--short")))
 
-        print("Tick Stock Panel 二开升级预检")
+        print("TSP 二开升级预检")
         print(f"仓库: {root}")
         print(f"当前: {current[:12]}")
         print(f"目标: {args.target} ({target[:12]})")

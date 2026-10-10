@@ -87,11 +87,16 @@ class Settings(BaseSettings):
     # TickFlow
     tickflow_api_key: str = Field(default="", description="留空启用 free 模式")
 
+    # Optional upstreams for built-in extended concept/industry presets.
+    # Empty values keep the presets available but disable automatic pulling.
+    ext_concept_data_url: str = ""
+    ext_industry_data_url: str = ""
+
     # AI
     ai_provider: str = "openai_compat"
-    ai_base_url: str = "https://llm.runninghub.ai/v1"
+    ai_base_url: str = ""
     ai_api_key: str = ""
-    ai_model: str = "openai/gpt-6-astra-saver"
+    ai_model: str = ""
     ai_codex_command: str = "codex"
     ai_codex_reasoning_effort: str = ""
     # 默认浏览器风格 UA,绕过 Cloudflare 等 CDN/WAF 的 Bot 拦截(Issue #8)。

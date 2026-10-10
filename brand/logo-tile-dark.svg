@@ -1,6 +1,6 @@
-<!-- Tick Stock Panel · 场景底卡 — 深色圆角卡 + 亮紫渐变主标
+<!-- TSP · 场景底卡 — 深色圆角卡 + 亮紫渐变主标
      规格: 64 网格; 圆角 12.5%; 描边 #232838; 对应 logo-tile-dark-*.png -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Tick Stock Panel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="TSP">
   <defs>
     <linearGradient id="tsp-tile-dark" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#C4B5FD"/>

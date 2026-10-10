@@ -21,7 +21,7 @@
 性能:
   - 单日分区 polars 向量化 (group_by 桶 x 板块), 全市场 ~百万行 4 列毫秒级
     (先例: ext_data dimension-intraday 同款直读口径)
-  - 进程内结果缓存 TTL 30s (分钟数据默认 6s 刷新一轮, 30s 已足够"实时"),
+  - 进程内结果缓存 TTL 30s (分钟数据默认 1s 刷新一轮, 30s 已足够"实时"),
     缓存键含全部影响结果的参数
 """
 from __future__ import annotations

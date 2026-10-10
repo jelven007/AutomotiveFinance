@@ -160,7 +160,7 @@ export function Auth() {
           <div className="mb-5 flex items-center gap-3">
             <Logo size={36} className="text-accent" />
             <div>
-              <div className="text-sm font-semibold text-foreground">Tick Stock Panel</div>
+              <div className="text-sm font-semibold text-foreground">TSP</div>
               <div className="text-[11px] text-muted">自托管量化工作台</div>
             </div>
           </div>

@@ -295,7 +295,7 @@ AI 必须按以下顺序工作：
 ### 6.1 可直接使用的任务模板
 
 ```text
-请在 Tick Stock Panel 当前仓库中实现：[具体需求]。
+请在 TSP 当前仓库中实现：[具体需求]。
 
 开始前完整阅读 AGENTS.md、CONTRIBUTING.md 和
 docs/secondary-development.md，并先检查 git status、真实调用链和现有测试。

@@ -36,7 +36,7 @@ def test_feishu_sends_saved_url_and_secret(monkeypatch):
     assert calls["secret"] == "my-secret"
     # 诊断路径单次尝试, 不等生产退避重试
     assert calls["max_attempts"] == 1
-    assert calls["title"] == "TickFlow Stock Panel 推送测试"
+    assert calls["title"] == "TSP 推送测试"
     assert "推送配置正确" in calls["body"]
 
 
@@ -85,7 +85,7 @@ def test_wecom_sends_saved_url(monkeypatch):
 
     assert result["ok"] is True
     assert calls["url"] == WECOM_URL
-    assert calls["title"] == "TickFlow Stock Panel 推送测试"
+    assert calls["title"] == "TSP 推送测试"
     assert "推送配置正确" in calls["body"]
 
 

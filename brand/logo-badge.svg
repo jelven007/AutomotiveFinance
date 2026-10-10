@@ -1,6 +1,6 @@
-<!-- Tick Stock Panel 品牌 logo — App 图标 / 头像徽章版 (直角方底)
+<!-- TSP 品牌 logo — App 图标 / 头像徽章版 (直角方底)
      品牌紫渐变方底 + 纯白全直角标记; 平台圆角由 OS/宿主自行裁切 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Tick Stock Panel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="TSP">
   <defs>
     <linearGradient id="tsp-badge" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#8B5CF6"/>

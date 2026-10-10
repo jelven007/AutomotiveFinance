@@ -6,11 +6,14 @@
 - 分钟侧: 传入当日全量分钟分区, 策略函数自身因果 (第 m 根只用 <=m 的K线);
 - 日线侧: T 日的日线条件窗口只含 T-1 及更早的完成态日K — 与实盘盘中行为一致
   (当日成形K不进窗口), 杜绝未来函数;
+- 成交侧: META.minute_entry_fill="next_minute_open" 使用信号后紧邻分钟的开盘价,
+  缺该分钟、无成交量或涨停价均拒买; 未设置时兼容旧版 signal_close;
 - 按交易日精确对日: 缺分钟分区的日子显式跳过, 不做"回退最近分区" (那是实盘语义)。
 """
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -69,16 +72,15 @@ def minute_panel_start(start: date, daily_bars: int) -> date:
 def _trigger_hhmm(value) -> str:
     """从 last_datetime 提取北京时间 "HH:MM" 触发分钟。
 
-    分区 datetime 为 UTC 存储 (tz-aware 或 naive-UTC), 统一折算到北京时区。
+    分区 naive datetime 遵循分钟库契约, 已是北京时间墙钟。仅 tz-aware
+    值需要转换到北京时间。
     """
     from app.market_time import CN_TZ
 
     if hasattr(value, "astimezone"):
-        if value.tzinfo is None:
-            from datetime import timezone
-
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(CN_TZ).strftime("%H:%M")
+        if value.tzinfo is not None:
+            value = value.astimezone(CN_TZ)
+        return value.strftime("%H:%M")
     text = str(value or "")
     if len(text) >= 16 and text[13] == ":":
         return text[11:16]
@@ -94,14 +96,15 @@ def _scalar_limit_up_price(prev_close: float, limit_pct: float) -> float:
 
 @dataclass
 class MinuteReplayHit:
-    """一个盘中入场信号: 触发分钟收盘买入。"""
+    """盘中成交与对应信号的时间, 价格已折算至日线复权口径。"""
 
     trade_date: date
     symbol: str
     # 已按当日 复权close/原始close 比例折算到复权价系的入场价, 与日线出场价同尺度。
     entry_price: float
-    trigger_time: str  # "HH:MM" — 触发分钟K的时间戳
+    trigger_time: str  # "HH:MM" 成交分钟; 兼容旧触发分钟收盘成交
     score: float = 0.0
+    signal_time: str | None = None
 
 
 @dataclass
@@ -111,6 +114,7 @@ class MinuteReplayResult:
     replayed_days: int = 0
     strategy_matches: int = 0
     buy_limit_up: int = 0
+    buy_no_next_minute: int = 0
     elapsed_ms: float = 0.0
 
 
@@ -144,6 +148,7 @@ class MinuteSignalReplayer:
 
         universe = symbols if symbols else panel.get_column("symbol").unique().to_list()
         daily_bars = int(strategy.minute_daily_bars or 0)
+        next_minute_open = strategy.meta.get("minute_entry_fill") == "next_minute_open"
 
         # 面板交易日序列 (升序) — 日线窗口切片与缺分区日判定的基准。
         panel_dates = panel.get_column("date").unique().sort().to_list()
@@ -232,19 +237,48 @@ class MinuteSignalReplayer:
 
             result.replayed_days += 1
             result.strategy_matches += len(run_result.rows)
+            fill_lookup = {}
+            if next_minute_open and run_result.rows:
+                hit_symbols = [row["symbol"] for row in run_result.rows]
+                fill_lookup = {
+                    (symbol, stamp): (open_price, volume)
+                    for symbol, stamp, open_price, volume in history.filter(
+                        pl.col("symbol").is_in(hit_symbols)
+                    ).select("symbol", "datetime", "open", "volume").iter_rows()
+                }
             for row in run_result.rows:
                 symbol = row.get("symbol")
                 close = row.get("close")
                 if not symbol or close is None or float(close) <= 0:
                     continue
                 raw_close = float(close)
+                trigger = row.get("last_datetime")
+                signal_time = _trigger_hhmm(trigger)
+                if next_minute_open:
+                    if not hasattr(trigger, "date"):
+                        result.buy_no_next_minute += 1
+                        continue
+                    fill_stamp = trigger + timedelta(minutes=1)
+                    fill = fill_lookup.get((symbol, fill_stamp))
+                    if (
+                        fill is None or fill_stamp.date() != day
+                        or fill[0] is None or not math.isfinite(float(fill[0])) or fill[0] <= 0
+                        or fill[1] is None or not math.isfinite(float(fill[1])) or fill[1] <= 0
+                    ):
+                        result.buy_no_next_minute += 1
+                        continue
+                    raw_close = float(fill[0])
+                    trigger = fill_stamp
                 name = prev_name.get(str(symbol), "")
                 prev = prev_raw_close.get(str(symbol))
+                if next_minute_open and (prev is None or not math.isfinite(prev) or prev <= 0):
+                    result.buy_no_next_minute += 1
+                    continue
                 is_risk_warning = risk_warning_by_day.get(
                     (day, str(symbol)),
                     is_risk_warning_name(name),
                 )
-                # 涨停拒买: 触发分钟收盘已达当日涨停价 (按 T-1 原始收盘 + 板块规则)。
+                # 涨停拒买: 实际成交价已达当日涨停价 (T-1 原始收盘 + 板块规则)。
                 if prev is not None and prev > 0:
                     limit_up = _scalar_limit_up_price(
                         prev,
@@ -257,7 +291,6 @@ class MinuteSignalReplayer:
                     if raw_close >= limit_up - 1e-9:
                         result.buy_limit_up += 1
                         continue
-                trigger = row.get("last_datetime")
                 trigger_time = _trigger_hhmm(trigger)
                 result.hits.append(MinuteReplayHit(
                     trade_date=day,
@@ -265,6 +298,7 @@ class MinuteSignalReplayer:
                     entry_price=raw_close * adj_factor.get(str(symbol), 1.0),
                     trigger_time=trigger_time,
                     score=float(run_result.scores.get(str(symbol), 0.0) or 0.0),
+                    signal_time=signal_time if next_minute_open else None,
                 ))
 
         result.elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)

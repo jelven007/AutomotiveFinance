@@ -82,6 +82,42 @@ def test_index_minute_amount_proxy_is_not_used_as_volume(monkeypatch):
     assert rows[0]["amount"] == 9482184704.0
 
 
+def test_company_info_resolves_named_f10_category(monkeypatch):
+    client = MootdxClient()
+    calls = []
+
+    def invoke(method, *args, **kwargs):
+        calls.append((method, args, kwargs))
+        if method == "get_company_info_category":
+            return [
+                {
+                    "name": "最新提示",
+                    "filename": "000001.txt",
+                    "start": 10,
+                    "length": 20,
+                }
+            ]
+        return "【特别处理】\n暂无数据"
+
+    monkeypatch.setattr(client, "_invoke", invoke)
+
+    assert client.company_info("000001.SZ", "最新提示") == "【特别处理】\n暂无数据"
+    assert calls[0][:2] == ("get_company_info_category", (0, "000001"))
+    assert calls[1] == (
+        "get_company_info_content",
+        (),
+        {
+            "market": 0,
+            "code": "000001",
+            "filename": "000001.txt",
+            "start": 10,
+            "length": 20,
+            "client_method": True,
+        },
+    )
+    assert client.company_info("000001.SZ", "公司概况") is None
+
+
 def _archive(eps=2.5):
     values = [float(i) for i in range(1, 315)]
     values[0] = eps

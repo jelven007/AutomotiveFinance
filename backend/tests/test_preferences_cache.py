@@ -62,6 +62,14 @@ def test_interval_setter_invalidates_cache(_isolated):
     assert preferences.load()["realtime_quote_interval"] == 2.0
 
 
+def test_realtime_quotes_default_to_enabled(_isolated):
+    assert preferences.get_realtime_quotes_enabled() is True
+
+
+def test_realtime_quote_interval_defaults_to_one_second(_isolated):
+    assert preferences.get_realtime_quote_interval() == 1.0
+
+
 def test_load_returns_copy_not_cached_object(_isolated):
     _isolated.write_text(json.dumps({"k": [1, 2]}), encoding="utf-8")
     first = preferences.load()

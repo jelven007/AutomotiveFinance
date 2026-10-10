@@ -964,7 +964,7 @@ def _make_writable_and_retry(
 
 def _codex_prompt(messages: Sequence[Message], *, max_tokens: int | None) -> str:
     parts = [
-        "You are Tick Stock Panel's local AI provider.",
+        "You are TSP's local AI provider.",
         "This is a text-generation task. The working directory is intentionally empty.",
         "Use only the user-provided prompt content below; do not inspect or modify local files.",
         "Return only the final requested content; do not include execution logs.",

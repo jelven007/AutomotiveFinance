@@ -53,13 +53,13 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const updateInterval = useUpdateQuoteInterval()
   const toggleQuote = useToggleRealtimeQuotes()
   // 实时模式以 quote_status 为准 (数据源无关): full_market=全市场 / none=不可用
-  const realtimeEnabled = prefs?.realtime_quotes_enabled ?? false
+  const realtimeEnabled = prefs?.realtime_quotes_enabled ?? true
   // 分时图实时刷新间隔 (秒), 与后端 [3,60] clamp 对齐; 默认 6
   const intradayInterval = prefs?.minute_intraday_refresh_interval ?? 6
   // 滑块本地草稿: 拖动时即时反馈, 停顿 2s 后落库 (与行情轮询滑块一致)
   const [intradayIntervalDraft, setIntradayIntervalDraft] = useState(intradayInterval)
-  // 盘中分钟增量 (Expert 专有): 间隔 (秒), 与后端 [3,120] clamp 对齐; 默认 6
-  const minuteRefreshInterval = prefs?.minute_refresh_interval ?? 6
+  // 盘中分钟增量: 间隔 (秒), 与后端 [1,120] clamp 对齐; 默认 1
+  const minuteRefreshInterval = prefs?.minute_refresh_interval ?? 1
   const [minuteRefreshIntervalDraft, setMinuteRefreshIntervalDraft] = useState(minuteRefreshInterval)
   // 盘中增量服务状态 (15s 轮询; 无服务时 available=false)
   const refreshStatus = useQuery({
@@ -70,8 +70,8 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const refreshPages = prefs?.sse_refresh_pages ?? {}
   const limitLadderMonitor = prefs?.limit_ladder_monitor_enabled ?? false
   const hasDepth = !!caps?.capabilities?.['depth5.batch']
-  // 全量分钟 = intraday.universe 能力 (TickFlow Expert 专有): 标的池单请求拉全市场当日分钟,
-  // 修复轮的 intraday.batch 与其同档, 见后端 minute_refresh 服务
+  // 全量分钟 = intraday.universe 能力: TickFlow Expert 或声明该能力的自定义源。
+  // 修复轮的 intraday.batch 与其共用门控, 见后端 minute_refresh 服务。
   const hasFullMinuteCap = !!caps?.capabilities?.['intraday.universe']
   const rs = refreshStatus.data
   // 新建监控规则时默认勾选的推送渠道 (全局默认值数组, 单条规则可独立修改)
@@ -80,8 +80,8 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
   const isTrading = quoteStatus?.is_trading_hours ?? false
   // 管道/数据修正运行期间实时行情被临时暂停 — 此时禁止开启
   const isPaused = quoteStatus?.paused ?? false
-  const interval = intervalData?.interval ?? 6
-  const minInterval = intervalData?.min_interval ?? 6
+  const interval = intervalData?.interval ?? 1
+  const minInterval = intervalData?.min_interval ?? 1
   const maxInterval = intervalData?.max_interval ?? 60
   const [intervalDraft, setIntervalDraft] = useState(interval)
   const feishuWebhookUrl = prefs?.feishu_webhook_url ?? ''
@@ -470,10 +470,10 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
             desc={
               !hasFullMinuteCap ? '需要全量分钟能力 (TickFlow Expert 或声明该能力的自定义源)'
               : rs?.repair_only ? `服务运行中 · ${rs?.provider ?? '自定义源'} 无廉价增量端点, 按 ≥60s 全天批量节奏`
-              : rs?.running ? (rs?.in_trading_hours ? '服务运行中' : '运行中 · 非连续竞价时段暂停')
+              : rs?.running ? (rs?.in_trading_hours ? '服务运行中' : '运行中 · 非拉取时段暂停')
               : '已关闭'
             }
-            checked={prefs?.minute_refresh_enabled ?? false}
+            checked={prefs?.minute_refresh_enabled ?? true}
             onChange={(v) => save({ minute_refresh_enabled: v })}
             disabled={!hasFullMinuteCap}
           />
@@ -492,16 +492,16 @@ export function SettingsMonitoringPanel({ highlight }: { highlight?: string } = 
             <div className="flex items-center gap-3 mt-2">
               <input
                 type="range"
-                min={3}
+                min={1}
                 max={120}
-                step={3}
+                step={1}
                 value={minuteRefreshIntervalDraft}
                 disabled={!hasFullMinuteCap}
                 onChange={(e) => setMinuteRefreshIntervalDraft(parseInt(e.target.value, 10))}
                 className="flex-1 h-1 accent-accent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               />
               <span className="text-[10px] text-muted shrink-0">
-                {minuteRefreshIntervalDraft !== minuteRefreshInterval ? '2秒后保存' : '3s — 120s'}
+                {minuteRefreshIntervalDraft !== minuteRefreshInterval ? '2秒后保存' : '1s — 120s'}
               </span>
             </div>
             {rs?.available && rs.rounds != null && rs.rounds > 0 && (

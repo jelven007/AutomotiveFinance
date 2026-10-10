@@ -106,12 +106,12 @@ def test_outbound_headers_default_and_override():
 
     h = outbound_headers()
     assert h["User-Agent"].startswith("tsp/")
-    assert h["X-TSP-Client"] == "tick-stock-panel"
+    assert h["X-TSP-Client"] == "tsp"
 
     h2 = outbound_headers({"user-agent": "my-ua", "X-Custom": "1"})
     assert h2["user-agent"] == "my-ua"          # 小写同名覆盖默认 UA
     assert "User-Agent" not in h2                # 不重复发送
-    assert h2["X-TSP-Client"] == "tick-stock-panel"  # 未覆盖的标识头保留
+    assert h2["X-TSP-Client"] == "tsp"  # 未覆盖的标识头保留
     assert h2["X-Custom"] == "1"
 
 
@@ -120,7 +120,7 @@ async def test_fetch_rows_carries_tsp_identity(fake_http):
     await fetch_rows_for_date(_cfg(), date(2026, 1, 5))
     headers = fake_http.header_calls[-1]
     assert headers["User-Agent"].startswith("tsp/")
-    assert headers["X-TSP-Client"] == "tick-stock-panel"
+    assert headers["X-TSP-Client"] == "tsp"
 
 
 async def test_fetch_rows_user_headers_take_precedence(fake_http):
@@ -137,7 +137,7 @@ async def test_fetch_rows_user_headers_take_precedence(fake_http):
     await fetch_rows_for_date(cfg, date(2026, 1, 5))
     headers = fake_http.header_calls[-1]
     assert headers["User-Agent"] == "custom-ua"
-    assert headers["X-TSP-Client"] == "tick-stock-panel"
+    assert headers["X-TSP-Client"] == "tsp"
 
 
 def test_with_date_param_url_building():

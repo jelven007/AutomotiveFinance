@@ -1,6 +1,6 @@
 # TSP 文档中心
 
-本文档是项目文档的统一入口。当前基线版本为 `0.3.3`，代码、测试和运行时
+本文档是项目文档的统一入口。当前基线版本为 `0.3.11`，代码、测试和运行时
 行为仍是最终事实来源；文档与代码冲突时，应先核对实现和测试，再同步修正文档。
 
 ## 生命周期覆盖
@@ -12,7 +12,7 @@
 | 开发 | [贡献与复审指南](../CONTRIBUTING.md) | [二次开发](./secondary-development.md)、[插件开发](./plugin-development.md)、[策略开发](./strategy.md) | 完整 |
 | 测试 | [测试与验收](./testing.md) | [技术验证记录](./technical-validation.md)、专项文档内测试矩阵、CI workflow | 完整 |
 | 运维 | [运维手册](./operations.md) | [部署](./deployment.md)、[配置](./configuration.md)、[公网密码](./deploy-password.md) | 完整 |
-| 上线运营 | [发布与上线运营](./release-operations.md) | GitHub Actions、Release、GHCR、反馈与复盘流程 | 完整 |
+| 上线运营 | [发布与上线运营](./release-operations.md) | GitHub Actions、Release、容器产物、反馈与复盘流程 | 完整 |
 
 这里的“完整”表示每个阶段已有明确责任文档、输入、输出和检查项，不表示所有流程均已
 自动化。当前人工门禁和自动化缺口见[发布与上线运营](./release-operations.md)。

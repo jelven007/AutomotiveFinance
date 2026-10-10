@@ -91,10 +91,10 @@ export function Financials() {
                 关于数据源
               </div>
               <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
-                当前财务数据源需付费,后续会接入免费数据源。如你常用某个免费财务数据源,欢迎在 Issues 中多多推荐哈 ~
+                当前部分财务数据源需要单独授权。可在项目 Issues 中提交其他合规数据源的接入建议。
               </p>
               <a
-                href="https://github.com/shy3130/tickflow-stock-panel/issues"
+                href="https://github.com/jelven007/TSP/issues"
                 target="_blank"
                 rel="noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
