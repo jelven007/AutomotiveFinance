@@ -71,7 +71,8 @@ def test_limit_prices_by_board():
     assert paper.limit_pct("000001.SZ", "stock") == 0.10
     assert paper.limit_pct("300750.SZ", "stock") == 0.20
     assert paper.limit_pct("688981.SH", "stock") == 0.20
-    assert paper.limit_pct("832000.BJ", "stock") == 0.30
+    with pytest.raises(ValueError, match="不支持"):
+        paper.limit_pct("832000.BJ", "stock")
     assert paper.limit_pct("510300.SH", "etf") == 0.10
     up, down = paper.limit_prices(10.0, "600519.SH", "stock")
     assert (up, down) == (11.0, 9.0)

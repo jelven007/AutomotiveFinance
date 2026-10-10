@@ -26,9 +26,9 @@ def current_provider_routes() -> dict[str, str]:
 
 
 def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]:
-    """Audit route availability and make mootdx single-source drift visible.
+    """Audit route availability and make rustdx single-source drift visible.
 
-    Independent per-dataset routing remains supported. Mixing mootdx with another
+    Independent per-dataset routing remains supported. Mixing rustdx with another
     provider is therefore a warning, not an automatic rewrite or fallback.
     """
     if tickflow_tier is None:
@@ -47,10 +47,10 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
         for row in rows
     }
     sources = sorted({route["provider"] for route in routes.values()})
-    mootdx_routes = sorted(
+    rustdx_routes = sorted(
         capability
         for capability, route in routes.items()
-        if route["provider"] == "mootdx"
+        if route["provider"] == "rustdx"
     )
     unavailable = sorted(
         capability
@@ -58,15 +58,14 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
         if not route["usable"]
     )
     all_capabilities = {str(capability["id"]) for capability in CAPABILITY_REGISTRY}
-    mootdx_only = set(mootdx_routes) == all_capabilities
-    rustdx_only = all(route["provider"] == "rustdx" for route in routes.values())
+    rustdx_only = set(rustdx_routes) == all_capabilities
 
     issues: list[dict[str, str]] = []
-    if mootdx_routes and not mootdx_only:
+    if rustdx_routes and not rustdx_only:
         issues.append({
-            "code": "mootdx_mixed_sources",
+            "code": "rustdx_mixed_sources",
             "severity": "warning",
-            "message": "mootdx 已启用, 但并非所有数据能力都路由到 mootdx",
+            "message": "rustdx 已启用, 但并非所有数据能力都路由到 rustdx",
         })
     if unavailable:
         issues.append({
@@ -83,10 +82,8 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
 
     if rustdx_only:
         policy = "rustdx_only"
-    elif mootdx_only:
-        policy = "mootdx_only"
-    elif mootdx_routes:
-        policy = "mixed_with_mootdx"
+    elif rustdx_routes:
+        policy = "mixed_with_rustdx"
     elif len(sources) == 1:
         policy = "single_source"
     else:
@@ -97,7 +94,6 @@ def audit_provider_routes(*, tickflow_tier: str | None = None) -> dict[str, Any]
         "healthy": status != "error",
         "policy": policy,
         "single_source": len(sources) == 1,
-        "mootdx_only": mootdx_only,
         "rustdx_only": rustdx_only,
         "mixed_sources": len(sources) > 1,
         "sources": sources,

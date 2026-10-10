@@ -4,6 +4,7 @@ from __future__ import annotations
 import polars as pl
 
 from app.indicators.pipeline import filter_halt_days
+from app.market_scope import filter_market_frame, supported_symbol
 
 DAILY_COLS = ["symbol", "date", "open", "high", "low", "close", "volume", "amount", "quote_ts"]
 ADJ_FACTOR_COLS = ["symbol", "trade_date", "ex_factor"]
@@ -27,11 +28,11 @@ def to_polars(data) -> pl.DataFrame:
         return pl.from_pandas(data.reset_index())
     try:
         return pl.DataFrame(data)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return pl.DataFrame()
 
 
-def normalize_daily(data, default_symbol: str | None = None, source: str = "tickflow") -> pl.DataFrame:  # noqa: ARG001
+def normalize_daily(data, default_symbol: str | None = None, source: str = "rustdx") -> pl.DataFrame:
     df = to_polars(data)
     if df.is_empty():
         return df
@@ -54,12 +55,12 @@ def normalize_daily(data, default_symbol: str | None = None, source: str = "tick
     for col in ("open", "high", "low", "close", "volume", "amount"):
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
-    df = filter_halt_days(df)
+    df = filter_market_frame(filter_halt_days(df))
     keep = [c for c in DAILY_COLS if c in df.columns]
     return df.select(keep) if keep else pl.DataFrame()
 
 
-def normalize_adj_factors(data, source: str = "tickflow") -> pl.DataFrame:  # noqa: ARG001
+def normalize_adj_factors(data, source: str = "rustdx") -> pl.DataFrame:
     df = to_polars(data)
     if df.is_empty():
         return df
@@ -85,17 +86,18 @@ def normalize_adj_factors(data, source: str = "tickflow") -> pl.DataFrame:  # no
             df = df.with_columns(pl.col("trade_date").cast(pl.Date, strict=False))
     if "ex_factor" in df.columns:
         df = df.with_columns(pl.col("ex_factor").cast(pl.Float64, strict=False))
+    df = filter_market_frame(df)
     keep = [c for c in ADJ_FACTOR_COLS if c in df.columns]
     return df.select(keep).drop_nulls() if len(keep) == len(ADJ_FACTOR_COLS) else pl.DataFrame()
 
 
-def normalize_instruments(rows: list[dict], asset_type: str, source: str = "tickflow") -> pl.DataFrame:
+def normalize_instruments(rows: list[dict], asset_type: str, source: str = "rustdx") -> pl.DataFrame:
     if not rows:
         return pl.DataFrame()
     out: list[dict] = []
     for item in rows:
         symbol = item.get("symbol")
-        if not symbol:
+        if not supported_symbol(symbol, asset_type):
             continue
         out.append({
             "symbol": str(symbol),

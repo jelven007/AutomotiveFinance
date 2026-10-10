@@ -149,10 +149,10 @@ def test_custom_source_uses_its_daily_calendar_without_tickflow(monkeypatch):
             return pl.DataFrame({"symbol": ["000001.SH"], "date": [date(2026, 9, 30)]})
 
     monkeypatch.setattr(
-        "app.services.preferences.get_realtime_data_provider", lambda: "mootdx"
+        "app.services.preferences.get_realtime_data_provider", lambda: "rustdx"
     )
     monkeypatch.setattr(
-        "app.data_providers.custom.is_custom_provider", lambda name: name == "mootdx"
+        "app.data_providers.custom.is_custom_provider", lambda name: name == "rustdx"
     )
     monkeypatch.setattr(
         "app.data_providers.custom.provider_has_dataset", lambda name, dataset: True
@@ -180,7 +180,7 @@ def test_custom_source_current_daily_bar_is_trading_day(monkeypatch):
         },
     )()
     monkeypatch.setattr(
-        "app.services.preferences.get_realtime_data_provider", lambda: "mootdx"
+        "app.services.preferences.get_realtime_data_provider", lambda: "rustdx"
     )
     monkeypatch.setattr("app.data_providers.custom.is_custom_provider", lambda name: True)
     monkeypatch.setattr(

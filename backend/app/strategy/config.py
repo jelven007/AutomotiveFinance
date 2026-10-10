@@ -11,6 +11,7 @@ import json
 import logging
 from pathlib import Path
 
+from app.market_scope import clean_market_config
 from app.services.fs_utils import atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def load_override(data_dir: Path, strategy_id: str) -> dict:
     if cached is not None and sig == _override_cache_sig.get(key):
         return copy.deepcopy(cached)
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = clean_market_config(json.loads(p.read_text(encoding="utf-8")))
         # 清理 basic_filter 中值为 None/空的键（避免固化无意义的空值）
         bf = data.get("basic_filter")
         if isinstance(bf, dict):
@@ -79,7 +80,7 @@ def save_override(data_dir: Path, strategy_id: str, overrides: dict) -> None:
     """保存策略的用户覆盖配置（全量覆盖写）"""
     p = _path(data_dir, strategy_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(p, json.dumps(overrides, ensure_ascii=False, indent=2))
+    atomic_write_text(p, json.dumps(clean_market_config(overrides), ensure_ascii=False, indent=2))
     _invalidate_override_cache(p)
 
 
@@ -98,7 +99,7 @@ def list_overrides(data_dir: Path) -> dict[str, dict]:
     for f in d.glob("*.json"):
         try:
             sid = f.stem
-            result[sid] = json.loads(f.read_text(encoding="utf-8"))
+            result[sid] = load_override(data_dir, sid)
         except Exception:
             continue
     return result

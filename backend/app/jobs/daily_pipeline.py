@@ -141,7 +141,7 @@ def _invalidate(table: str | None = None) -> None:
 
 
 def _resolve_universe(capset: CapabilitySet, repo=None) -> list[str]:
-    """解析标的池 — 以 CN_Equity_A (沪深京A股 ~5522只) 为主。
+    """解析标的池 — 以沪深 A 股目录为主。
 
     有 batch 能力 → 直接拉 CN_Equity_A universe
     其他用户 → 用 instruments parquet + watchlist 兜底
@@ -172,7 +172,8 @@ def _resolve_universe(capset: CapabilitySet, repo=None) -> list[str]:
     # 进股票池会污染 kline_daily/kline_minute)。ETF 刻意保留 (既有行为)。
     if repo is not None:
         base -= set(repo.get_index_symbol_set())
-    return sorted(base)
+    from app.market_scope import removed_market_symbol
+    return sorted(s for s in base if not removed_market_symbol(s))
 
 
 def run_instruments_sync(repo: KlineRepository) -> dict:

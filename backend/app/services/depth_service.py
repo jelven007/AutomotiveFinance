@@ -398,6 +398,8 @@ class DepthService:
         out = self._repo.store.data_dir / "depth5" / f"date={ds}" / "part.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
         # 原子写: 先写临时文件再 os.replace, 避免读侧 (get_sealed_map) 读到半写 parquet
+        from app.market_scope import filter_market_frame
+        df = filter_market_frame(df)
         tmp = out.with_name(out.name + ".tmp")
         df.write_parquet(tmp)
         os.replace(tmp, out)

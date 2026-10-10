@@ -83,7 +83,13 @@ def _fetch_instruments_via_provider(asset_type: str = "stock") -> list[dict] | N
         rows = (
             _flatten_instruments(items or [])
             if asset_type == "stock"
-            else [dict(item) for item in (items or []) if isinstance(item, dict)]
+            else [
+                dict(item) for item in (items or [])
+                if isinstance(item, dict)
+                and item.get("symbol")
+                and str(item["symbol"]).upper().endswith((".SH", ".SZ"))
+                and not str(item["symbol"]).startswith(("4", "8", "92"))
+            ]
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("provider %s get_instruments 失败: %s", provider_name, e)

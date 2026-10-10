@@ -27,7 +27,7 @@ def test_readiness_reports_local_dependency_status(
     monkeypatch.setattr(
         health,
         "audit_provider_routes",
-        lambda: {"status": "ok", "mootdx_only": True},
+        lambda: {"status": "ok", "rustdx_only": True},
     )
     monkeypatch.setattr(
         health,

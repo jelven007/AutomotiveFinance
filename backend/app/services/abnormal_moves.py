@@ -4,7 +4,6 @@
 主板/科创板条款号指上交所《交易规则(2026年修订)》, 2026-07-06 施行):
 - 主板:     连续3日收盘价涨跌幅偏离值累计 ±20% (5.4.2)
 - 创业板/科创板: 3日 ±30% (科创板 6.10)
-- 北交所:   3日 ±40%
 - 严重异常波动 (5.4.3/6.11): 10日累计偏离 +100%(-50%), 30日 +200%(-70%) —
   负向阈值显著严于正向 (跌方向更早触发), 各板块相同。
   「10日内4次同向异常波动」情形 (科创板3次) 需事件计数, 暂未实现。
@@ -28,6 +27,7 @@ import polars as pl
 
 from app.indicators.pipeline import BENCH_KEYS, DEVIATION_WINDOWS, bench_rt_pct_for
 from app.market_time import cn_today
+from app.market_scope import filter_market_frame, supported_symbol
 from app.services import trading_day
 
 
@@ -48,7 +48,6 @@ class AbnormalRule:
 # 3日异常波动阈值各板块对称; 10/30日严重异动各板块一致且不对称 (+100%/-50%, +200%/-70%)
 _MAIN = {3: (0.20, 0.20), 10: (1.00, 0.50), 30: (2.00, 0.70)}
 _GEM_STAR = {3: (0.30, 0.30), 10: (1.00, 0.50), 30: (2.00, 0.70)}
-_BSE = {3: (0.40, 0.40), 10: (1.00, 0.50), 30: (2.00, 0.70)}
 
 RULES_META: list[dict[str, Any]] = [
     {"board": "主板", "st": False, "thresholds": {f"{k}d": {"up": u, "down": d} for k, (u, d) in _MAIN.items()},
@@ -56,18 +55,14 @@ RULES_META: list[dict[str, Any]] = [
              "负向更严; 2026-07-06 起风险警示(ST)股票同口径 (原±15%特别规定已废止)"},
     {"board": "创业板/科创板", "st": False, "thresholds": {f"{k}d": {"up": u, "down": d} for k, (u, d) in _GEM_STAR.items()},
      "note": "20%涨跌幅板块, 3日±30%"},
-    {"board": "北交所", "st": False, "thresholds": {f"{k}d": {"up": u, "down": d} for k, (u, d) in _BSE.items()},
-     "note": "30%涨跌幅板块, 3日±40%"},
 ]
 
-_BENCH_RT_CANDIDATES = ["000002.SH", "000001.SH", "399107.SZ", "399001.SZ", "899050.BJ"]
+_BENCH_RT_CANDIDATES = ["000002.SH", "000001.SH", "399107.SZ", "399001.SZ"]
 
 
 def _bench_key_of(symbol: str) -> str:
-    """symbol → 板块基准键, 与 pipeline._bench_key_expr 同口径 (SH/STAR/SZ/GEM/BJ)。"""
+    """symbol → 板块基准键, 与 pipeline._bench_key_expr 同口径 (SH/STAR/SZ/GEM)。"""
     code = symbol.split(".")[0]
-    if symbol.endswith(".BJ"):
-        return "BJ"
     if symbol.endswith(".SH"):
         return "STAR" if code.startswith("68") else "SH"
     if symbol.endswith(".SZ"):
@@ -77,9 +72,9 @@ def _bench_key_of(symbol: str) -> str:
 
 def board_of(symbol: str) -> str:
     """按代码前缀判定板块。"""
+    if not supported_symbol(symbol, "stock"):
+        raise ValueError(f"不支持的股票市场: {symbol}")
     code = symbol.split(".")[0]
-    if symbol.endswith(".BJ") or code[:2] in {"43", "83", "87", "92"}:
-        return "北交所"
     if code.startswith("68"):
         return "科创板"
     if code.startswith(("30", "301")):
@@ -95,9 +90,7 @@ def rule_for(symbol: str, name: str | None) -> AbnormalRule:
     board = board_of(symbol)
     st = is_st_name(name)
     # 主板风险警示股票 2026-07-06 起与普通股票同标准 (涨跌幅 10%,
-    # 异常波动特别规定废止); st 仅为展示标记。创业板/科创板/北交所本就不区分。
-    if board == "北交所":
-        return AbnormalRule(board, st, _BSE)
+    # 异常波动特别规定废止); st 仅为展示标记。创业板/科创板本就不区分。
     if board in ("创业板", "科创板"):
         return AbnormalRule(board, st, _GEM_STAR)
     return AbnormalRule(board, st, _MAIN)
@@ -135,7 +128,7 @@ def _hist_snapshot(repo: Any) -> dict[str, Any]:
     if not df.is_empty() and "symbol" in df.columns:
         cols = ["symbol", *[c for c in ("name", "close", "change_pct",
                                         "deviate_3d", "deviate_10d", "deviate_30d") if c in df.columns]]
-        df = df.select(cols)
+        df = filter_market_frame(df.select(cols))
         for r in df.iter_rows(named=True):
             rows[str(r["symbol"])] = {
                 "name": r.get("name"),
@@ -211,6 +204,8 @@ def build_overview(
 
     out_rows: list[dict[str, Any]] = []
     for symbol, base in hist_rows.items():
+        if not supported_symbol(symbol, "stock"):
+            continue
         rule = rule_for(symbol, base.get("name"))
         rt_pct = base.get("rt_pct")
         rt_delta = 0.0 if includes_today else (
@@ -298,7 +293,9 @@ def build_intraday(repo: Any, limit: int = 500) -> dict[str, Any]:
     if not present:
         return empty
 
-    hits = df.filter(pl.any_horizontal([pl.col(c).fill_null(False) for c, _ in present]))
+    hits = filter_market_frame(df).filter(
+        pl.any_horizontal([pl.col(c).fill_null(False) for c, _ in present])
+    )
     if hits.is_empty():
         return empty
     counts = {k: int(hits[c].fill_null(False).sum()) for c, k in present}

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://fuyao.aicubes.cn"
 
-# 单页 6000 覆盖全市场(实测 ~5600 含北交所, 2026-08 服务端不截断 limit=6000),
+# 单页 6000 覆盖上游全市场(2026-08 服务端不截断 limit=6000),
 # 一次请求拉完; 分页循环兜底未来标的扩容或服务端改为截断的场景。
 _SNAPSHOT_PAGE_SIZE = 6000
 _SNAPSHOT_MAX_PAGES = 50
@@ -122,7 +122,7 @@ class FuyaoClient:
         与 A 股快照不同: 必须显式传 thscodes (逗号分隔), 无全量枚举;
         单次批量上限实测 627 个代码 (~6.3KB 参数, 超出 HTTP 400);
         混入未知代码整批失败 (code=1002 连坐), 调用方需自行过滤。
-        覆盖范围: 沪深交易所指数 + 同花顺板块指数, 无北交所 (官方文档明确)。
+        覆盖范围: 沪深交易所指数 + 同花顺板块指数。
         """
         if not thscodes:
             return [], 0

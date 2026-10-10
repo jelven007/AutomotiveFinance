@@ -144,7 +144,6 @@ function fmtSealAmount(v: number): string {
 function boardTag(symbol: string): { label: string; cls: string } | null {
   if (/^(300|301)/.test(symbol)) return { label: '创', cls: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
   if (/^688/.test(symbol))       return { label: '科', cls: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
-  if (/\.BJ$/.test(symbol))      return { label: '北', cls: 'text-purple-400 bg-purple-400/12 border-purple-400/25' }
   return null
 }
 
@@ -238,7 +237,7 @@ const StockCard = React.memo(function StockCard({ stock, extFields, direction, s
 }) {
   const [showMonitorMenu, setShowMonitorMenu] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null)
-  const code = stock.symbol.replace(/\.BJ$/, '').replace(/\.SZ$/, '').replace(/\.SH$/, '')
+  const code = stock.symbol.replace(/\.(SZ|SH)$/, '')
   const tag = boardTag(stock.symbol)
   const status = stock.status || (direction === 'down' ? 'limit_down' : 'limit_up')
   const style = STATUS_STYLE[status] || STATUS_STYLE[direction === 'down' ? 'limit_down' : 'limit_up']
@@ -638,7 +637,7 @@ function MonitorMenu({ stock, direction, sealMode, monitorRule, anchorRect, hasD
 
 // ===== 过滤（多选） =====
 
-type FilterKey = 'limit_up' | 'broken' | 'failed' | 'limit_down' | 'recovery' | 'main' | 'chinext' | 'star' | 'bj' | 'st'
+type FilterKey = 'limit_up' | 'broken' | 'failed' | 'limit_down' | 'recovery' | 'main' | 'chinext' | 'star' | 'st'
 
 const STATUS_TABS_UP: { key: FilterKey; label: string }[] = [
   { key: 'limit_up', label: '涨停' },
@@ -660,7 +659,6 @@ const BOARD_TABS: { key: FilterKey; label: string }[] = [
   { key: 'main', label: 'A主板' },
   { key: 'chinext', label: '创业板' },
   { key: 'star', label: '科创板' },
-  { key: 'bj', label: '北交所' },
   { key: 'st', label: 'ST' },
 ]
 
@@ -679,13 +677,11 @@ function matchFilter(stock: LimitLadderStock, key: FilterKey): boolean {
     case 'failed':
       return stock.status === 'failed'
     case 'main':
-      return !/^(300|301|688)/.test(s) && !/\.BJ$/.test(s) && !n.includes('ST')
+      return /^(60|00)/.test(s) && !n.includes('ST')
     case 'chinext':
       return /^(300|301)/.test(s)
     case 'star':
       return /^688/.test(s)
-    case 'bj':
-      return /\.BJ$/.test(s)
     case 'st':
       return n.includes('ST')
   }
@@ -729,12 +725,13 @@ function filterTiers(tiers: LimitLadderTier[], keys: Set<FilterKey>, bf?: Broken
 
 // ===== 过滤持久化 =====
 
-const DEFAULT_FILTERS = new Set<FilterKey>(['limit_up', 'main', 'chinext', 'star', 'bj'])
+const DEFAULT_FILTERS = new Set<FilterKey>(['limit_up', 'main', 'chinext', 'star'])
 
 function loadFilterKeys(): Set<FilterKey> {
   const arr = storage.limitLadderBoard.get([])
   const allTabs = [...STATUS_TABS_UP, ...BOARD_TABS]
   const valid = arr.filter((k): k is FilterKey => allTabs.some(t => t.key === k))
+  if (valid.length !== arr.length) storage.limitLadderBoard.set(valid)
   return valid.length > 0 ? new Set(valid) : new Set(DEFAULT_FILTERS)
 }
 
@@ -1490,8 +1487,8 @@ export function LimitUpLadder() {
     storage.limitLadderDirection.set(d)
     // 切换方向时重置状态筛选为该方向默认集(避免涨跌状态键错配)
     const defaultKeys = d === 'down'
-      ? ['limit_down', 'main', 'chinext', 'star', 'bj']
-      : ['limit_up', 'main', 'chinext', 'star', 'bj']
+      ? ['limit_down', 'main', 'chinext', 'star']
+      : ['limit_up', 'main', 'chinext', 'star']
     const allTabs = [...statusTabs(d), ...BOARD_TABS]
     const valid = defaultKeys.filter(k => allTabs.some(t => t.key === k)) as FilterKey[]
     setFilterKeys(new Set(valid))

@@ -21,7 +21,7 @@ NOW = datetime(2026, 10, 9, 9, 25, 12, tzinfo=CN_TZ)
 
 
 class _Provider:
-    name = "mootdx"
+    name = "rustdx"
 
     def __init__(self, *, source_time: str = "09:25:10.000", prev_close: float = 10.0):
         self.calls: list[list[str]] = []
@@ -91,7 +91,7 @@ def _seed(data_dir, *, as_of: date = DAY) -> None:
     }).write_parquet(daily)
 
 
-def _capture(monkeypatch, tmp_path, provider: _Provider, provider_name: str = "mootdx") -> dict:
+def _capture(monkeypatch, tmp_path, provider: _Provider, provider_name: str = "rustdx") -> dict:
     monkeypatch.setattr(
         auction_snapshot.preferences,
         "get_realtime_data_provider",
@@ -269,7 +269,7 @@ def test_ready_partition_prevents_duplicate_network_capture(tmp_path, monkeypatc
 def test_outside_window_and_holiday_are_fail_closed(tmp_path, monkeypatch):
     _seed(tmp_path)
     provider = _Provider()
-    monkeypatch.setattr(auction_snapshot.preferences, "get_realtime_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(auction_snapshot.preferences, "get_realtime_data_provider", lambda: "rustdx")
     monkeypatch.setattr(auction_snapshot.custom_sources, "is_custom_provider", lambda name: True)
     monkeypatch.setattr(auction_snapshot.custom_sources, "get_provider", lambda name: provider)
 
@@ -336,7 +336,7 @@ def test_failure_notification_persists_broadcasts_and_deduplicates(tmp_path, mon
     result = {
         "state": "fetch_failed",
         "trade_date": DAY.isoformat(),
-        "provider": "mootdx",
+        "provider": "rustdx",
         "message": "network timeout",
     }
 

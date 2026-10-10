@@ -10,6 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.25" }
-rustdx-complete = "=1.11.0"
+rustdx-complete = { git = "https://github.com/jelven007/rustdx.git", rev = "fac771a18cd218c90852254e59b040874d156722" }
 serde = "1"
 serde_json = "1"

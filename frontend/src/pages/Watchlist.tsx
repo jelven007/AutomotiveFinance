@@ -53,9 +53,9 @@ import {
 } from '@/lib/watchlist-columns'
 
 // ===== 板块标识（筛选/卡片用） =====
-// 注: boardTag（创/科/北 标签）已移至共享 @/components/stock-table/primitives
+// 注: boardTag（创/科 标签）已移至共享 @/components/stock-table/primitives
 
-const BOARDS = ['沪主板', '深主板', '创业板', '科创板', '北交所'] as const
+const BOARDS = ['沪主板', '深主板', '创业板', '科创板'] as const
 type BoardType = typeof BOARDS[number]
 
 // 板块筛选选项 = 股票板块 + ETF（ETF 无 symbol 板块语义，按 asset_type 匹配）
@@ -64,10 +64,9 @@ const BOARD_OPTIONS = [...BOARDS, ETF_BOARD]
 
 function getBoardType(symbol: string): BoardType | null {
   if (/^(300|301)/.test(symbol)) return '创业板'
-  if (/^688/.test(symbol))       return '科创板'
-  if (/\.BJ$/.test(symbol))      return '北交所'
+  if (/^(688|689)/.test(symbol)) return '科创板'
   if (/^60[0135]/.test(symbol))  return '沪主板'
-  if (/^00[012]/.test(symbol))   return '深主板'
+  if (/^00[0123]/.test(symbol))  return '深主板'
   return null
 }
 
@@ -1133,7 +1132,9 @@ export function Watchlist() {
   // 板块筛选（持久化）
   // 兼容: 旧存储不含 ETF 键 → 加载时补上，保持 ETF 行默认可见
   const [boardFilter, setBoardFilter] = useState<Set<string>>(() => {
-    const saved = storage.watchlistBoardFilter.get([])
+    const raw = storage.watchlistBoardFilter.get([])
+    const saved = raw.filter(board => BOARD_OPTIONS.includes(board))
+    if (saved.length !== raw.length) storage.watchlistBoardFilter.set(saved)
     return saved.length > 0 ? new Set([...saved, ETF_BOARD]) : new Set(BOARD_OPTIONS) // 默认全选
   })
   const persistBoardFilter = useCallback((next: Set<string>) => {

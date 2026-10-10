@@ -757,6 +757,9 @@ def compute_limit_signals(
     输入必须包含: symbol, date, raw_close, raw_high, raw_low, open, high, low, close,
                   change_pct, vol_ratio_5d。
     """
+    from app.market_scope import filter_market_frame
+    df = filter_market_frame(df)
+    instruments = filter_market_frame(instruments)
     if df.is_empty():
         return df
 
@@ -1175,7 +1178,8 @@ def compute_enriched(
         return raw
 
     # 过滤停牌日 (会污染指标计算)
-    raw = filter_halt_days(raw)
+    from app.market_scope import filter_market_frame
+    raw = filter_market_frame(filter_halt_days(raw))
 
     if raw.is_empty():
         return raw
@@ -1227,13 +1231,11 @@ DEVIATION_WINDOWS: tuple[int, ...] = (3, 10, 30)
 # - 科创板:   科创50 (上交所《交易规则》2026修订 6.12 指定基准) → 上证A指
 # - 深主板:   深证A指 → 深证成指 (深交所投教口径)
 # - 创业板:   创业板综合指数 → 深证A指 (深交所投教口径)
-# - 北交所:   北证50 → 上证指数 (北交所《交易规则》5.4.4)
 _BENCHMARK_PREFERENCE: dict[str, list[str]] = {
     "SH": ["000002.SH", "000001.SH"],
     "STAR": ["000688.SH", "000002.SH"],
     "SZ": ["399107.SZ", "399001.SZ"],
     "GEM": ["399102.SZ", "399107.SZ"],
-    "BJ": ["899050.BJ", "000001.SH"],
 }
 
 # 偏离值计算需要的全部基准指数 (quote_service 并入实时显式拉取, 不依赖监控规则)
@@ -1241,7 +1243,7 @@ BENCHMARK_INDEX_SYMBOLS: frozenset[str] = frozenset(
     sym for cands in _BENCHMARK_PREFERENCE.values() for sym in cands
 )
 
-# 全部板块基准键 (SH/STAR/SZ/GEM/BJ)
+# 全部板块基准键 (SH/STAR/SZ/GEM)
 BENCH_KEYS: tuple[str, ...] = tuple(_BENCHMARK_PREFERENCE)
 
 _benchmark_cache: dict[str, tuple[float, pl.DataFrame | None]] = {}
@@ -1252,7 +1254,7 @@ def load_benchmark_momentum(data_dir: Path) -> pl.DataFrame | None:
     """读取指数日K, 计算各基准指数的滚动 N 日涨跌幅。
 
     返回长表: date, bench_key, bench_close, bench_mom3d, bench_mom10d, bench_mom30d。
-    bench_key 为板块基准键 (SH/STAR/SZ/GEM/BJ, 见 _BENCHMARK_PREFERENCE)。
+    bench_key 为板块基准键 (SH/STAR/SZ/GEM, 见 _BENCHMARK_PREFERENCE)。
     bench_close 供盘中路径外推今日基准动量 (benchmark_momentum_today)。
     无可用指数数据时返回 None (偏离列置 null, 不阻塞主流程)。
     进程内按 data_dir 缓存 (TTL 10 分钟)。
@@ -1324,16 +1326,15 @@ def load_benchmark_momentum(data_dir: Path) -> pl.DataFrame | None:
 
 
 def _bench_key_expr() -> pl.Expr:
-    """symbol → 板块基准键 (SH/STAR/SZ/GEM/BJ), 无法识别时 null。
+    """symbol → 板块基准键 (SH/STAR/SZ/GEM), 无法识别时 null.
 
-    北交所按后缀; 沪市按 68 前缀区分科创板; 深市按 30 前缀区分创业板。
+    沪市按 68 前缀区分科创板; 深市按 30 前缀区分创业板。
     与 abnormal_moves.board_of 的板块判定同口径。
     """
     code = pl.col("symbol").str.slice(0, 6)
     suffix = pl.col("symbol").str.slice(-2).str.to_uppercase()
     return (
-        pl.when(suffix == "BJ").then(pl.lit("BJ"))
-        .when((suffix == "SH") & code.str.starts_with("68")).then(pl.lit("STAR"))
+        pl.when((suffix == "SH") & code.str.starts_with("68")).then(pl.lit("STAR"))
         .when(suffix == "SH").then(pl.lit("SH"))
         .when((suffix == "SZ") & code.str.starts_with("30")).then(pl.lit("GEM"))
         .when(suffix == "SZ").then(pl.lit("SZ"))

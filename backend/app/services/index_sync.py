@@ -34,8 +34,8 @@ from app.tickflow.repository import KlineRepository
 
 logger = logging.getLogger(__name__)
 
-# exchanges.get_instruments 查询的交易所(沪深京)
-_EXCHANGES = ["SH", "SZ", "BJ"]
+# exchanges.get_instruments 查询的交易所(沪深)
+_EXCHANGES = ["SH", "SZ"]
 
 
 def _quotes_to_index_instruments(resp) -> pl.DataFrame:
@@ -83,7 +83,8 @@ def _quotes_to_index_instruments(resp) -> pl.DataFrame:
         pl.col("symbol").str.split(".").list.first().alias("code"),
         pl.lit("index").alias("asset_type"),
     ])
-    return result.unique(subset=["symbol"], keep="last").sort("symbol")
+    from app.market_scope import filter_market_frame
+    return filter_market_frame(result).unique(subset=["symbol"], keep="last").sort("symbol")
 
 
 def _fetch_instruments_by_type(instrument_type: str, asset_type_label: str) -> pl.DataFrame:
@@ -98,6 +99,7 @@ def _fetch_instruments_by_type(instrument_type: str, asset_type_label: str) -> p
         rows = [
             {"symbol": str(row["symbol"]), "name": row.get("name") or str(row["symbol"])}
             for row in custom_rows if row.get("symbol")
+            and str(row["symbol"]).upper().endswith((".SH", ".SZ"))
         ]
         if not rows:
             return pl.DataFrame()

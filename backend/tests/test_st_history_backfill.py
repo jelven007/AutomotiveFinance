@@ -127,19 +127,19 @@ def test_build_governed_history_tracks_events_and_quarantines_unknowns() -> None
     assert second["is_risk_warning"].to_list() == [False, True]
     quarantined = history.filter(pl.col("symbol") == "000003.SZ").row(0, named=True)
     assert quarantined["is_risk_warning"] is True
-    assert quarantined["source"] == "mootdx_f10_unknown_quarantine"
+    assert quarantined["source"] == "rustdx_f10_unknown_quarantine"
 
-    rustdx_history = build_governed_history(
+    archived_history = build_governed_history(
         instruments, coverage, events,
         successful_symbols={"000001.SZ", "000002.SZ"},
         quarantined_symbols={"000003.SZ"},
         as_of=date(2026, 10, 8),
         available_at="2026-10-08T04:00:00+00:00",
-        source_prefix="rustdx_f10",
+        source_prefix="archived_f10",
     )
-    assert rustdx_history.drop("source").equals(history.drop("source"))
-    assert set(rustdx_history["source"].to_list()) == {
-        "rustdx_f10_backfill", "rustdx_f10_unknown_quarantine",
+    assert archived_history.drop("source").equals(history.drop("source"))
+    assert set(archived_history["source"].to_list()) == {
+        "archived_f10_backfill", "archived_f10_unknown_quarantine",
     }
 
 

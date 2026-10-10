@@ -15,6 +15,7 @@ from typing import Literal
 import polars as pl
 
 from app.config import settings
+from app.market_scope import filter_market_frame, removed_market_symbol
 from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
@@ -69,17 +70,20 @@ def get_pool(pool_id: PoolId, refresh: bool = False) -> list[str]:
             provider = custom.get_provider(provider_name)
             asset_type = "stock" if pool_id == "CN_Equity_A" else "index"
             rows = provider.get_instruments(asset_type)
-            return sorted({row["symbol"] for row in rows if row.get("symbol")})
+            return sorted({
+                row["symbol"] for row in rows
+                if row.get("symbol") and not removed_market_symbol(row["symbol"])
+            })
         except Exception as exc:
             logger.warning("selected catalog %s/%s unavailable: %s", provider_name, pool_id, exc)
             return []
 
     cache = _pool_cache_path(pool_id)
     if cache.exists() and not refresh:
-        df = pl.read_parquet(cache)
+        df = filter_market_frame(pl.read_parquet(cache))
         return df["symbol"].to_list()
 
-    symbols = _fetch_pool(pool_id)
+    symbols = [s for s in _fetch_pool(pool_id) if not removed_market_symbol(s)]
     if symbols:
         from app.services.fs_utils import atomic_write_parquet
 
@@ -109,8 +113,8 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
             logger.warning("fetch pool %s via universe %s failed: %s", pool_id, uid, e)
 
     if pool_id == "CN_Equity_A":
-        # 全 A — 优先直接用 CN_Equity_A universe (包含沪深京三市)
-        uid = _find_universe_id(["CN_Equity_A", "沪深京A股", "全A"])
+        # 全 A — 上游 universe 在返回边界按本项目沪深范围过滤
+        uid = _find_universe_id(["CN_Equity_A", "全A"])
         if uid:
             try:
                 df = tf.quotes.get_by_universes([uid], as_dataframe=True)
@@ -119,7 +123,7 @@ def _fetch_pool(pool_id: PoolId) -> list[str]:
             except Exception as e:  # noqa: BLE001
                 logger.warning("fetch CN_Equity_A via universe %s failed: %s", uid, e)
 
-        # fallback: 聚合申万一级行业 (覆盖度较低, 缺北交所/新股)
+        # fallback: 聚合申万一级行业 (覆盖度较低, 可能缺新股)
         try:
             unis = tf.universes.list()
         except Exception as e:  # noqa: BLE001
@@ -157,7 +161,7 @@ def _load_watchlist() -> list[str]:
     path = settings.data_dir / "user_data" / "watchlist.parquet"
     if not path.exists():
         return []
-    df = pl.read_parquet(path)
+    df = filter_market_frame(pl.read_parquet(path))
     if df.is_empty() or "symbol" not in df.columns:
         return []
     return df["symbol"].to_list()

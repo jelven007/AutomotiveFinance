@@ -1,6 +1,6 @@
 # 自定义数据源接入
 
-本项目默认使用 mootdx。自定义数据源是一个可选扩展: 外部 HTTP 服务负责取数和整理, 本项目只把返回结果映射成内部标准字段, 然后复用现有存储、指标、enriched、策略和前端展示逻辑。
+本项目默认使用 rustdx。自定义数据源是一个可选扩展: 外部 HTTP 服务负责取数和整理, 本项目只把返回结果映射成内部标准字段, 然后复用现有存储、指标、enriched、策略和前端展示逻辑。
 
 ## 支持范围
 
@@ -15,7 +15,7 @@
 | 全量分钟 | `full_minute` | 与 `minute` 同形;声明后可被路由为「全量分钟」生效源,内置服务盘中按当日窗口全市场批量落盘(仅修复轮语义,节奏下限 60s) |
 | 财务数据 | `financial` | 一个配置覆盖全部财务表,请求时把表名作为参数传给上游;字段由数据源决定,仅需映射出 symbol |
 
-YAML 声明式源暂不支持深度盘口 `depth5`；该能力可由 TickFlow、mootdx 或实现
+YAML 声明式源暂不支持深度盘口 `depth5`；该能力可由 TickFlow、rustdx 或实现
 `get_depth_batch` 的 Python/Node Provider 插件提供。
 
 `full_minute` 声明式源只提供修复轮(当日窗口批量);廉价增量端点
@@ -232,7 +232,7 @@ cp docs/examples/custom-data-source/mock_source.yaml data/data_sources/mock_sour
 5. 保存数据源选择:
 
 - 日K: `mock_source`
-- 除权因子: `mock_source` (或保持默认 `mootdx`)
+- 除权因子: `mock_source` (或保持默认 `rustdx`)
 - 实时行情: `mock_source`
 
 6. 触发同步或开启实时行情。

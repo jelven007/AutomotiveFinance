@@ -9,16 +9,15 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from app.plugins.mootdx.client import MootdxError
-
-_RUSTDX_CRATE_VERSION = "1.11.0"
+_RUSTDX_CRATE_VERSION = "1.12.0"
+_RUSTDX_SOURCE_REV = "fac771a18cd218c90852254e59b040874d156722"
 _MAX_CONNECTIONS = 35
 _DEFAULT_SERVER = "117.34.114.13:7709"
 _NATIVE_LOCK = threading.Lock()
 _NATIVE_CLIENT = None
 
 
-class RustdxError(MootdxError):
+class RustdxError(RuntimeError):
     """rustdx protocol, bridge, or connection failure."""
 
 
@@ -58,11 +57,22 @@ def availability() -> tuple[bool, str]:
         module = importlib.import_module("tsp_rustdx_native")
         maximum = int(module.MAX_CONNECTIONS)
         version = str(module.__version__)
+        rustdx_version = str(module.RUSTDX_VERSION)
+        rustdx_source_rev = str(module.RUSTDX_SOURCE_REV)
     except (ImportError, AttributeError, TypeError, ValueError) as exc:
         return False, f"缺少 rustdx 原生桥接: {exc}"
     if maximum != _MAX_CONNECTIONS:
         return False, f"rustdx 原生桥接连接上限异常: {maximum}"
-    return True, f"rustdx-complete {_RUSTDX_CRATE_VERSION} / bridge {version}"
+    if (
+        rustdx_version != _RUSTDX_CRATE_VERSION
+        or rustdx_source_rev != _RUSTDX_SOURCE_REV
+    ):
+        return False, "rustdx 原生桥接依赖版本与项目锁定版本不一致"
+    return (
+        True,
+        f"rustdx-complete {_RUSTDX_CRATE_VERSION} "
+        f"(jelven007/rustdx@{_RUSTDX_SOURCE_REV[:7]}) / bridge {version}",
+    )
 
 
 def close_native_pool() -> None:
@@ -74,13 +84,14 @@ def close_native_pool() -> None:
 
 
 def _security(symbol: str) -> tuple[int, str]:
+    from app.market_scope import removed_market_symbol
+    if removed_market_symbol(symbol):
+        raise RustdxError(f"无效交易所: {symbol}")
     code, separator, exchange = str(symbol or "").upper().partition(".")
     if len(code) != 6 or not code.isdigit():
         raise RustdxError(f"无效证券代码: {symbol}")
     if not separator:
         exchange = "SH" if code.startswith("6") else "SZ" if code.startswith(("0", "3")) else ""
-    if exchange == "BJ":
-        raise RustdxError("rustdx 当前标准行情接口不支持北交所")
     if exchange not in {"SH", "SZ"}:
         raise RustdxError(f"无效交易所: {symbol}")
     return (1 if exchange == "SH" else 0), code

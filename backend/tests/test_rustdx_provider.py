@@ -150,7 +150,7 @@ def test_rustdx_depth_preserves_five_level_quantities(native):
 
 
 def test_client_rejects_unsupported_exchange(native):
-    with pytest.raises(RustdxError, match="北交所"):
+    with pytest.raises(RustdxError, match="无效交易所"):
         RustdxClient().quotes(["920001.BJ"])
 
 
@@ -164,6 +164,11 @@ def test_provider_caps_full_market_workers_at_35(monkeypatch):
 
 def test_native_bridge_clamps_direct_constructor_to_35():
     native_module = pytest.importorskip("tsp_rustdx_native")
+    assert native_module.RUSTDX_VERSION == "1.12.0"
+    assert (
+        native_module.RUSTDX_SOURCE_REV
+        == "fac771a18cd218c90852254e59b040874d156722"
+    )
     client = native_module.RustdxClient(100)
     try:
         assert client.max_connections == 35
@@ -186,6 +191,25 @@ def test_missing_native_bridge_is_isolated(monkeypatch):
 
     assert available is False
     assert "缺少 rustdx 原生桥接" in reason
+
+
+def test_native_bridge_dependency_mismatch_is_rejected(monkeypatch):
+    class StaleNative:
+        MAX_CONNECTIONS = 35
+        __version__ = "0.1.0"
+        RUSTDX_VERSION = "1.11.0"
+        RUSTDX_SOURCE_REV = "stale"
+
+    monkeypatch.setattr(
+        rustdx_client.importlib,
+        "import_module",
+        lambda _name: StaleNative,
+    )
+
+    available, reason = rustdx_client.availability()
+
+    assert available is False
+    assert "依赖版本与项目锁定版本不一致" in reason
 
 
 def test_provider_uses_one_native_full_market_call():
@@ -284,6 +308,21 @@ def test_plugin_covers_all_core_datasets_and_is_default_provider():
         "full_minute",
     }
     assert preferences._DEFAULT_DATA_PROVIDER == "rustdx"
+
+
+def test_registry_defaults_to_rustdx_and_retains_tickflow_and_plugins(monkeypatch):
+    from app.data_providers.registry import get_provider
+    from app.data_providers.tickflow_provider import TickFlowProvider
+
+    assert isinstance(get_provider(), RustdxProvider)
+    assert isinstance(get_provider("tickflow"), TickFlowProvider)
+    fallback = object()
+    calls = []
+    monkeypatch.setattr(
+        custom_sources, "get_provider", lambda name: calls.append(name) or fallback,
+    )
+    assert get_provider("fuyao") is fallback
+    assert calls == ["fuyao"]
 
 
 def test_native_bridge_declares_bounded_parallel_quote_batches():

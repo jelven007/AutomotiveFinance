@@ -52,8 +52,8 @@ except ImportError:
     prange = range
 
 _MATRIX_CACHE_VERSION = 1
-_DIRECT_MATRIX_LOADER_VERSION = 4
-_MATRIX_AXIS_INDEX_VERSION = 1
+_DIRECT_MATRIX_LOADER_VERSION = 5
+_MATRIX_AXIS_INDEX_VERSION = 2
 _ARROW_BATCH_SIZE = 131_072
 _SCORE_ASSET_CHUNK_SIZE = 256
 _ROLLING_MATERIALIZED_WINDOW_BUDGET_BYTES = 32 * 1024 * 1024
@@ -575,6 +575,8 @@ def build_market_data_matrix(
     field_columns: set[str] | frozenset[str] | None = None,
 ) -> MarketDataMatrix:
     """Encode a long base panel into immutable ``time x asset`` arrays."""
+    from app.market_scope import filter_market_frame
+    panel = filter_market_frame(panel)
     if panel.is_empty():
         raise ValueError("cannot build MarketDataMatrix from an empty panel")
 
@@ -891,6 +893,9 @@ def _matrix_filter_expression(
 ):
     expression = (pads.field("date") >= pa.scalar(start)) & (
         pads.field("date") <= pa.scalar(end)
+    )
+    expression &= ~pc.match_substring_regex(
+        pads.field("symbol"), pattern=r"(?i)(\.BJ$|^(?:[48]\d{5}|92\d{4})(?:\.[A-Z]+)?$)",
     )
     if symbols is not None:
         expression &= pads.field("symbol").isin(list(symbols))
@@ -3748,6 +3753,8 @@ def build_basic_filter_mask(market: MarketDataMatrix, config: dict) -> np.ndarra
 
 
 def _build_basic_filter_mask_uncached(market: MarketDataMatrix, config: dict) -> np.ndarray:
+    from app.market_scope import clean_market_config
+    config = clean_market_config(config)
     if not config or not config.get("enabled", True):
         return np.ones(market.shape, dtype=bool)
 
@@ -3790,6 +3797,8 @@ def _build_basic_filter_mask_uncached(market: MarketDataMatrix, config: dict) ->
             mask &= asset_mask[None, :]
 
     boards = config.get("boards")
+    if config.get("market_scope_empty"):
+        mask[:] = False
     if isinstance(boards, list) and boards:
         board_mask = np.zeros(len(market.symbols), dtype=bool)
         for asset_id, symbol in enumerate(market.symbols):
@@ -4378,7 +4387,5 @@ def _symbol_in_boards(symbol: str, boards: list[str]) -> bool:
         if board == "创业板" and symbol.startswith(("300", "301")):
             return True
         if board == "科创板" and symbol.startswith("688"):
-            return True
-        if board == "北交所" and symbol.endswith(".BJ"):
             return True
     return False

@@ -1,6 +1,6 @@
 # 数据源插件开发指南
 
-数据源插件是可选的行情数据来源(fuyao、mootdx、akshare 等),作为独立模块放在
+数据源插件是可选的行情数据来源(rustdx、fuyao 等),作为独立模块放在
 `backend/app/plugins/` 下。services 层(kline_sync / quote_service / financial_sync)
 通过各数据集的独立偏好分流。所选日K、除权或分钟源缺能力、加载失败或返回空数据时,
 保持该来源并报告不可用或空结果, 不自动换用 TickFlow。
@@ -10,9 +10,7 @@
 > 无代码接入(纯 HTTP YAML 配置)请看 [custom-data-source.md](./custom-data-source.md),
 > 两种方式遵循同一套内部数据契约。
 >
-> mootdx 的安装、环境变量、单位校准及覆盖限制见
-> [mootdx 数据源](./mootdx-data-source.md)。
-> rustdx 的原生桥接、35 连接池与独立路由见
+> rustdx 的安装、原生桥接、35 连接池、单位校准及覆盖限制见
 > [rustdx 数据源](./rustdx-data-source.md)。
 
 ## 快速上手
@@ -318,10 +316,6 @@ uv run --extra dev python -m ruff check app/plugins/<your_plugin>/ tests/test_<y
 - **`backend/app/plugins/rustdx/`** — 默认 Rust 数据源，覆盖七类核心能力；
   PyO3 桥接 `rustdx-complete`，进程内最多 35 条连接，独立财务下载与解析。
   运行要求和数据边界见 [rustdx 数据源](./rustdx-data-source.md)。
-- **`backend/app/plugins/mootdx/`** — Python 插件，无 API Key，覆盖
-  `daily/adj_factor/realtime/minute/depth5/financial/full_minute` 七项能力；
-  含证券/指数/ETF 路由、单位校准、财务归档解析和 09:25 竞价快照接口。
-  详细边界与验证记录见 [mootdx 数据源](./mootdx-data-source.md)。
 - **`backend/app/plugins/fuyao/`** — 同花顺官方 REST 数据源(runtime: none, 纯 HTTP 零依赖)
   - 提供 `realtime`(A 股全市场快照, 分页拉取)、`daily`(原始价日K三档: 近端窗口走 daily-k-10d dump, 深窗口走 daily-k 10 年全量 dump(172MB 一次下载、缓存复用、10d 补尾), 兜底单标的接口按 10 年自动分片)、`adj_factor`(事件 dump + 前收盘价从本地日K dump 一次取齐、缺价标的回退单标的接口, 按交易所公式推导单事件比值, 涨跌停自检; 全市场配价从逐标的 ~13 分钟降为秒级); Key 在设置页卡片直接配置(先探后存), 或 `.env` 配 `FUYAO_API_KEY`
   - `client.py` — httpx 客户端(X-api-key 认证 + 统一信封解包 + 分页 + 页间隔限频 + 单标的日K + dump 预签名下载, S3 下载不带 Key 头)

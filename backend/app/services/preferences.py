@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 # 文件仅在用户改设置时变化, 以 (mtime_ns, size) 签名判断是否重读。
 _cache: dict | None = None
 _cache_sig: tuple[int, int] | None = None
+_DATA_PROVIDER_FIELDS = (
+    "daily_data_provider",
+    "adj_factor_provider",
+    "minute_data_provider",
+    "full_minute_data_provider",
+    "depth5_data_provider",
+    "realtime_data_provider",
+    "financial_data_provider",
+)
 
 
 def _path() -> Path:
@@ -52,6 +61,11 @@ def load() -> dict:
     except Exception as e:
         logger.warning("preferences.json malformed: %s", e)
         return {}
+    # Retired routes resolve to the default without rewriting historical data.
+    # The next ordinary save persists the normalized preferences.
+    for field in _DATA_PROVIDER_FIELDS:
+        if str(data.get(field) or "").strip().lower() == "mootdx":
+            data[field] = _DEFAULT_DATA_PROVIDER
     _cache = data
     _cache_sig = sig
     return copy.deepcopy(_cache)
@@ -272,6 +286,18 @@ def _allowed_data_providers() -> set[str]:
         return _ALLOWED_DATA_PROVIDERS | custom_sources.names() | known_plugins
     except Exception:  # noqa: BLE001
         return set(_ALLOWED_DATA_PROVIDERS)
+
+
+def reset_data_provider(name: str) -> None:
+    """Reset every route referencing a removed source in one atomic write."""
+    current = load()
+    updates = {
+        field: _DEFAULT_DATA_PROVIDER
+        for field in _DATA_PROVIDER_FIELDS
+        if str(current.get(field) or "").lower() == name.lower()
+    }
+    if updates:
+        save(updates)
 
 
 def get_daily_data_provider() -> str:

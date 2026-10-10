@@ -57,8 +57,6 @@ def _json_safe(value: Any) -> Any:
 
 
 def _board(symbol: str) -> str:
-    if symbol.endswith(".BJ"):
-        return "北交所"
     if symbol.startswith(("300", "301")):
         return "创业板"
     if symbol.startswith(("688", "689")):
@@ -435,7 +433,8 @@ def build_market_overview(
             "industry_rank": {"leading": [], "lagging": []},
         }
 
-    df = svc._load_enriched_for_date(as_of)
+    from app.market_scope import filter_market_frame
+    df = filter_market_frame(svc._load_enriched_for_date(as_of))
     if df.is_empty():
         rows: list[dict] = []
     else:

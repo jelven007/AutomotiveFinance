@@ -110,6 +110,9 @@ class DataStore:
         # 新版改为 {app}/data/。老用户首次启动时自动把旧数据搬过来, 无感升级。
         self._migrate_legacy_data_dir()
 
+        from app.market_scope import purge_removed_market
+        purge_removed_market(self.data_dir)
+
         # 关键子目录(§7.2)
         for sub in (
             "kline_daily",
@@ -2287,12 +2290,16 @@ class KlineRepository:
         临时文件后缀 .tmp 不匹配 *.parquet glob, 不会被扫描误读。
         Windows 下目标正被并发读取时由 replace_with_retry 短退避穿过。
         """
+        from app.market_scope import filter_market_frame
+        df = filter_market_frame(df)
         tmp = out.with_name(out.name + ".tmp")
         df.write_parquet(tmp)
         replace_with_retry(tmp, out)
 
     def _write_daily_partition(self, df: pl.DataFrame, table: str) -> None:
         """按 date 分区写入 parquet，每个日期一个文件，支持 merge-upsert。"""
+        from app.market_scope import filter_market_frame
+        df = filter_market_frame(df)
         base = self.store.data_dir / table
         generation_asset = {
             "kline_daily_enriched": "stock",
@@ -2468,6 +2475,8 @@ class KlineRepository:
 
     def flush_live_daily_asset(self, asset_type: str, df: pl.DataFrame) -> None:
         """覆写当天指定资产日K分区 (实时行情落盘, 非merge)。"""
+        from app.market_scope import filter_market_frame
+        df = filter_market_frame(df)
         if df.is_empty() or "date" not in df.columns:
             return
         table = {
@@ -2496,6 +2505,8 @@ class KlineRepository:
 
     def flush_live_enriched_asset(self, asset_type: str, df: pl.DataFrame) -> None:
         """覆写当天指定资产 enriched 分区 (实时 enriched 落盘, 非merge)。"""
+        from app.market_scope import filter_market_frame
+        df = filter_market_frame(df)
         if df.is_empty() or "date" not in df.columns:
             return
         dt = df["date"][0]

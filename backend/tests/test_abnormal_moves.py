@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import polars as pl
+import pytest
 
 from app.indicators.pipeline import (
     attach_deviation_columns,
@@ -94,7 +95,7 @@ def test_benchmark_momentum_today_math(tmp_path) -> None:
     quotes = pl.DataFrame({"symbol": ["000001.SH"], "change_pct": [10.0]})
 
     out = benchmark_momentum_today(tmp_path, quotes)
-    row = out.row(0, named=True)
+    row = out.filter(pl.col("bench_key") == "SH").row(0, named=True)
     # 今收 = 15 x 1.10 = 16.5; 3 个交易日前的收盘 = 13 (与全量路径 shift(3) 同口径)
     # mom3d = 16.5/13 - 1
     assert abs(row["bench_mom3d"] - (16.5 / 13 - 1)) < 1e-9
@@ -104,7 +105,7 @@ def test_benchmark_momentum_today_math(tmp_path) -> None:
 
     # 无实时行情 → rt 按 0 处理: mom3d = 15/13 - 1
     out0 = benchmark_momentum_today(tmp_path, None)
-    assert abs(out0.row(0, named=True)["bench_mom3d"] - (15.0 / 13 - 1)) < 1e-9
+    assert abs(out0.filter(pl.col("bench_key") == "SH").row(0, named=True)["bench_mom3d"] - (15.0 / 13 - 1)) < 1e-9
 
 
 def test_benchmark_momentum_today_percent_not_treated_as_decimal(tmp_path) -> None:
@@ -114,7 +115,7 @@ def test_benchmark_momentum_today_percent_not_treated_as_decimal(tmp_path) -> No
     quotes = pl.DataFrame({"symbol": ["000001.SH"], "change_pct": [-1.88]})
 
     out = benchmark_momentum_today(tmp_path, quotes)
-    row = out.row(0, named=True)
+    row = out.filter(pl.col("bench_key") == "SH").row(0, named=True)
     # 今收 = 15 x (1 - 0.0188) = 14.718; mom3d = 14.718/13 - 1
     assert abs(row["bench_mom3d"] - (15.0 * 0.9812 / 13 - 1)) < 1e-9
 
@@ -192,7 +193,8 @@ def test_board_and_st_rules() -> None:
     assert board_of("000001.SZ") == "主板"
     assert board_of("301123.SZ") == "创业板"
     assert board_of("688123.SH") == "科创板"
-    assert board_of("920001.BJ") == "北交所"
+    with pytest.raises(ValueError, match="不支持"):
+        board_of("920001.BJ")
     assert is_st_name("*ST 某某") is True
     assert is_st_name("正常股") is False
 
@@ -206,8 +208,8 @@ def test_board_and_st_rules() -> None:
     gem = rule_for("301123.SZ", "正常股")
     assert gem.thresholds[3] == (0.30, 0.30)
     assert gem.thresholds[10] == (1.00, 0.50)
-    bse = rule_for("920001.BJ", "正常股")
-    assert bse.thresholds[3] == (0.40, 0.40)
+    with pytest.raises(ValueError, match="不支持"):
+        rule_for("920001.BJ", "正常股")
 
 
 class _FakeRepo:
@@ -373,8 +375,6 @@ def test_build_overview_negative_side_stricter_threshold() -> None:
 
 
 # ── 监控规则接入 (type=abnormal) ────────────────────────
-
-import pytest
 
 from app.strategy import monitor_rules
 from app.strategy.monitor import MonitorRuleEngine

@@ -18,13 +18,14 @@ import { boardTag } from '@/components/stock-table/primitives'
 import { PageHeader } from '@/components/PageHeader'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { useQuoteStatus } from '@/lib/useSharedQueries'
+import { getBoardType } from '@/lib/board'
 
 /**
  * 异动监控 — 全时段异动中心, 按交易时间线分三个 tab:
  *
  * - 竞价异动 (盘前 9:15-9:25): 当前实时源全市场终态快照 + 可选同花顺风向标
  * - 盘中异动 (盘中实时): enriched 当日信号聚合 — 涨停/炸板/翘板/跌停/新高/新低/放量
- * - 偏移异动 (多日累计): 交易所异动规则口径 (3日±20%/30%/40%, 10日+100%, 30日+200%)
+ * - 偏移异动 (多日累计): 交易所异动规则口径 (3日±20%/30%, 10日+100%, 30日+200%)
  *   实时计算个股「偏离值/阈值」接近度, 找出处于异动边缘的标的。
  *
  * 偏移异动计算量可控: 主开关默认关闭, 开启后才发起轮询 (每 60s 一次); 关闭后
@@ -48,7 +49,7 @@ const STATUS_META: Record<AbnormalStatus, { label: string; cls: string; bar: str
   watch: { label: '观察', cls: 'bg-elevated text-secondary', bar: 'bg-muted' },
 }
 
-const BOARDS = ['主板', '创业板', '科创板', '北交所'] as const
+const BOARDS = ['主板', '创业板', '科创板'] as const
 
 const REFRESH_MS = 60_000
 
@@ -471,10 +472,10 @@ function IntradayView({ onPreview }: {
     let list = data?.rows ?? []
     if (sigFilter !== 'all') list = list.filter(r => r.signals.includes(sigFilter))
     if (boardFilter !== 'all') {
-      // boardTag: 创/科/北有徽章, 主板返回 null
+      // boardTag: 创/科有徽章, 主板返回 null
       const want = boardFilter === '主板' ? null
         : boardFilter === '创业板' ? '创'
-          : boardFilter === '科创板' ? '科' : '北'
+          : '科'
       list = list.filter(r => (boardTag(r.symbol)?.label ?? null) === want)
     }
     if (excludeSt) list = list.filter(r => !(r.name ?? '').toUpperCase().includes('ST'))
@@ -688,7 +689,17 @@ function DeviationView({ onPreview }: {
   const [rulesOpen, setRulesOpen] = useState(false)
   // 上次计算结果: 开启时每次成功计算都落本地, 关闭后仍展示
   const [lastResult, setLastResult] = useState<AbnormalOverview | null>(
-    () => (storage.abnormalLastResult.get(null) as AbnormalOverview | null) ?? null,
+    () => {
+      const saved = storage.abnormalLastResult.get(null) as AbnormalOverview | null
+      if (!saved) return null
+      // 旧结果包含旧规则及统计计数，重新计算前整体失效。
+      if (saved.rows.some(row => !getBoardType(row.symbol))
+        || saved.rules.some(rule => !['主板', '创业板/科创板'].includes(rule.board))) {
+        storage.abnormalLastResult.set(null)
+        return null
+      }
+      return saved
+    },
   )
   const [windowFilter, setWindowFilter] = useState<'all' | WindowKey>('all')
   const [direction, setDirection] = useState<'both' | 'up' | 'down'>('both')
@@ -786,7 +797,7 @@ function DeviationView({ onPreview }: {
           </div>
           <p className="mt-2.5 border-t border-border/60 pt-2 text-[10px] leading-relaxed text-muted">
             口径说明: 偏离值 = 个股 N 日累计涨跌幅 − 对应指数同期涨跌幅 (沪主板: 上证A指/上证指数,
-            科创板: 科创50, 深主板: 深证A指/深证成指, 创业板: 创业板综指, 北: 北证50)。
+            科创板: 科创50, 深主板: 深证A指/深证成指, 创业板: 创业板综指)。
             阈值为交易所异常波动披露标准的近似值, 仅供风险提示,
             不构成监管认定。每只股票在 3日/10日/30日 三档各算一个接近度 (|偏离值| ÷ 该档阈值,
             阈值随板块不同; 2026-07-06 起主板风险警示股票与普通股票同口径), 表格「接近度」列与状态取三档中的最高值,
@@ -1211,5 +1222,4 @@ function SegmentedControl<T extends string>({ value, onChange, options }: {
 const FALLBACK_RULES: Array<{ board: string; st: boolean; thresholds: Record<string, { up: number; down: number }>; note: string }> = [
   { board: '主板', st: false, thresholds: { '3d': { up: 0.2, down: 0.2 }, '10d': { up: 1.0, down: 0.5 }, '30d': { up: 2.0, down: 0.7 } }, note: '' },
   { board: '创业板/科创板', st: false, thresholds: { '3d': { up: 0.3, down: 0.3 }, '10d': { up: 1.0, down: 0.5 }, '30d': { up: 2.0, down: 0.7 } }, note: '' },
-  { board: '北交所', st: false, thresholds: { '3d': { up: 0.4, down: 0.4 }, '10d': { up: 1.0, down: 0.5 }, '30d': { up: 2.0, down: 0.7 } }, note: '' },
 ]

@@ -25,7 +25,11 @@ export const BUILTIN_DEFAULT_BASIC_FILTER: DefaultStrategyBasicFilter = {
 
 export function loadDefaultBasicFilter(): DefaultStrategyBasicFilter {
   const saved = storage.defaultStrategyBasicFilter.get(null)
-  return saved ? { ...BUILTIN_DEFAULT_BASIC_FILTER, ...saved } : { ...BUILTIN_DEFAULT_BASIC_FILTER }
+  if (!saved) return { ...BUILTIN_DEFAULT_BASIC_FILTER }
+  const boards = saved.boards.filter(board => ALL_BOARDS.includes(board))
+  const next = { ...BUILTIN_DEFAULT_BASIC_FILTER, ...saved, boards }
+  if (boards.length !== saved.boards.length) storage.defaultStrategyBasicFilter.set(next)
+  return next
 }
 
 interface Props {

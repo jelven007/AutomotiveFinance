@@ -191,10 +191,10 @@ class TestExcludeST:
         self._reset_cache(monkeypatch)
         self._write_instruments(tmp_path, {
             "s1.SH": "*ST环保", "S2.SH": "ST万邦", "S3.SZ": "正常股",
-            "s4.BJ": "S*ST京", "S5.SH": "斯太尔",  # 中文名含"斯"不含 ST 标记
+            "s4.SZ": "S*ST样本", "S5.SH": "斯太尔",  # 中文名含"斯"不含 ST 标记
         })
         got = market_mainline.load_risk_warning_symbols(tmp_path)
-        assert got == frozenset({"S1.SH", "S2.SH", "S4.BJ"})  # 大写归一
+        assert got == frozenset({"S1.SH", "S2.SH", "S4.SZ"})  # 大写归一
         # 缓存命中: 再次读取不重扫磁盘
         self._write_instruments(tmp_path, {"S9.SH": "ST新增"})
         assert market_mainline.load_risk_warning_symbols(tmp_path) == got

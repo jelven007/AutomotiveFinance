@@ -103,6 +103,48 @@ def test_data_provider_defaults_to_rustdx_but_preserves_explicit_choice(
     assert getter() == "tickflow"
 
 
+def test_retired_routes_normalize_on_read_and_persist_on_next_save(_isolated):
+    stored = dict.fromkeys(preferences._DATA_PROVIDER_FIELDS, "MOOTDX")
+    stored["financial_data_provider"] = "tickflow"
+    stored["theme"] = "dark"
+    _isolated.write_text(json.dumps(stored), encoding="utf-8")
+    original = _isolated.read_bytes()
+
+    loaded = preferences.load()
+    assert loaded["financial_data_provider"] == "tickflow"
+    assert all(
+        loaded[field] == "rustdx"
+        for field in preferences._DATA_PROVIDER_FIELDS
+        if field != "financial_data_provider"
+    )
+    assert _isolated.read_bytes() == original
+
+    preferences.save({"realtime_quote_interval": 1.0})
+    persisted = json.loads(_isolated.read_text())
+    assert persisted["daily_data_provider"] == "rustdx"
+    assert persisted["financial_data_provider"] == "tickflow"
+    assert persisted["theme"] == "dark"
+
+
+def test_removing_source_resets_all_its_routes_and_preserves_alternatives(_isolated):
+    preferences.save({
+        **dict.fromkeys(preferences._DATA_PROVIDER_FIELDS, "custom_source"),
+        "financial_data_provider": "fuyao",
+        "theme": "dark",
+    })
+
+    preferences.reset_data_provider("custom_source")
+
+    loaded = preferences.load()
+    assert loaded["financial_data_provider"] == "fuyao"
+    assert loaded["theme"] == "dark"
+    assert all(
+        loaded[field] == "rustdx"
+        for field in preferences._DATA_PROVIDER_FIELDS
+        if field != "financial_data_provider"
+    )
+
+
 def test_mining_schedule_defaults_are_disabled(_isolated):
     assert preferences.get_mining_schedule() == {
         "mining_schedule_enabled": False,

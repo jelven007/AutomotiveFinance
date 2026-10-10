@@ -47,7 +47,7 @@ DEFAULT_BASIC_FILTER: dict = {
     "turnover_max": None,
     "exclude_st": True,
     "exclude_new_days": 30,
-    "boards": ["沪主板", "深主板", "创业板", "科创板", "北交所"],
+    "boards": ["沪主板", "深主板", "创业板", "科创板"],
 }
 
 # 叠加策略硬上限：子策略数量。控制信号计算成本与字段并集膨胀，避免 OOM。
@@ -478,6 +478,8 @@ class StrategyEngine:
         meta_bf = meta.get("basic_filter")
         if meta_bf:
             bf.update(meta_bf)
+        from app.market_scope import clean_market_config
+        bf = clean_market_config(bf)
 
         filter_fn = getattr(mod, "filter", None)
         filter_history_fn = getattr(mod, "filter_history", None)
@@ -1565,6 +1567,8 @@ class StrategyEngine:
     @staticmethod
     def _basic_filter_expr(df: pl.DataFrame, bf: dict) -> pl.Expr | None:
         """构建基础过滤表达式。回测可复用为买入候选 mask，不删除行情行。"""
+        from app.market_scope import clean_market_config
+        bf = clean_market_config(bf)
         exprs: list[pl.Expr] = []
         if bf.get("price_min") is not None:
             exprs.append(pl.col("close") >= bf["price_min"])
@@ -1603,6 +1607,8 @@ class StrategyEngine:
                 exprs.append(~pl.col("name").str.contains("(?i)ST|\\*ST|退"))
         # 板块过滤
         boards = bf.get("boards")
+        if bf.get("market_scope_empty"):
+            exprs.append(pl.lit(False))
         if boards and isinstance(boards, list) and len(boards) > 0:
             board_exprs: list[pl.Expr] = []
             for b in boards:
@@ -1620,10 +1626,7 @@ class StrategyEngine:
                     )
                 elif b == "科创板":
                     board_exprs.append(pl.col("symbol").str.starts_with("688"))
-                elif b == "北交所":
-                    board_exprs.append(pl.col("symbol").str.contains(r"\.BJ$"))
-            if board_exprs:
-                exprs.append(pl.any_horizontal(board_exprs))
+            exprs.append(pl.any_horizontal(board_exprs) if board_exprs else pl.lit(False))
         if exprs:
             return pl.all_horizontal(exprs)
         return None

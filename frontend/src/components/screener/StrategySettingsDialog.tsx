@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, Settings2, RotateCcw, Save, ChevronDown, Filter, Star, TrendingUp, Sparkles, Download, Layers, Plus, Trash2 } from 'lucide-react'
 import { api, type StrategyDetail, type StrategyParamDef, type CompositeChildInfo, type ScoringDirection } from '@/lib/api'
@@ -113,7 +113,7 @@ export function RangeField({ label, minVal, maxVal, onMinChange, onMaxChange, un
 }
 
 // 板块标签
-export const ALL_BOARDS = ['沪主板', '深主板', '创业板', '科创板', '北交所']
+export const ALL_BOARDS = ['沪主板', '深主板', '创业板', '科创板']
 
 // 策略参数字段
 function ParamField({ def, value, onChange }: {

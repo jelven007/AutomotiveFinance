@@ -42,6 +42,7 @@ import pyarrow.parquet as pq
 
 from app.data_providers.normalizer import DAILY_COLS, normalize_daily
 from app.indicators.pipeline import filter_halt_days
+from app.market_scope import removed_market_symbol, supported_symbol
 from app.plugins.fuyao import client as fuyao_client
 from app.plugins.fuyao.client import FuyaoClient, FuyaoError
 
@@ -185,12 +186,10 @@ def _ref_price(
 
 
 def _price_limit(symbol: str) -> float:
-    """按代码前缀给涨跌停幅度(自检容差用): 创业板/科创板 20%, 北交所 30%, 主板 10%。"""
+    """按代码前缀给沪深涨跌停幅度(自检容差用)。"""
     code = symbol.split(".")[0]
     if code.startswith(("300", "301", "688", "689")):
         return 0.20
-    if code.startswith(("8", "4", "92")):
-        return 0.30
     return 0.10
 
 
@@ -265,7 +264,7 @@ def _map_snapshot_row(row: dict, fetched_ms: int, *, volume_to_hand: bool = True
     volume_to_hand: A 股快照 volume 为股 → 手; 指数快照无此口径, 直接透传。
     """
     symbol = row.get("thscode")
-    if not symbol:
+    if not symbol or removed_market_symbol(symbol):
         return None
     last = _to_float(row.get("last_price"))
     prev = _to_float(_first(row, "prev_price", "prev_close_price"))
@@ -412,10 +411,10 @@ class FuyaoProvider:
         """指数实时快照 → 内部 realtime record (可选插件协议, quote_service 鸭子类型调用)。
 
         A 股快照不含指数, 指数在扶摇是独立端点; 覆盖沪深交易所指数 + 同花顺板块,
-        无北交所 (未知代码会整批 1002 连坐, .BJ 直接跳过)。失败返回 None,
+        请求限于沪深代码, 未知交易所不进入批量请求。失败返回 None,
         让上层与“成功但无数据”的空列表区分, 保留上轮有效指数缓存。
         """
-        wanted = [s for s in symbols if s and not s.upper().endswith(".BJ")]
+        wanted = [s for s in symbols if supported_symbol(s, "index")]
         if not wanted:
             return []
         try:
@@ -473,6 +472,7 @@ class FuyaoProvider:
         on_chunk_done: Callable[[int, int], None] | None = None,
     ) -> Iterator[pl.DataFrame]:
         """分批产出日K,供历史同步逐批落盘,避免全市场结果累积在内存。"""
+        symbols = [s for s in symbols if not removed_market_symbol(s)]
         if not symbols or asset_type != "stock":
             return
         end_dt = end_time or datetime.now()
@@ -693,6 +693,7 @@ class FuyaoProvider:
         未来已公告事件无前收盘, 留给滚动增量窗口(15 天)自然补上。
         """
         schema = {"symbol": pl.String, "trade_date": pl.Date, "ex_factor": pl.Float64}
+        symbols = [s for s in symbols if not removed_market_symbol(s)]
         if not symbols or asset_type != "stock":
             return pl.DataFrame(schema=schema)
         try:
@@ -889,6 +890,7 @@ class FuyaoProvider:
           报告期合并写入会让两源数据共存, 互不覆盖;
         - shares: 扶摇无股本接口, 恒返回空(已有存量靠合并写入保留)。
         """
+        symbols = [s for s in symbols if not removed_market_symbol(s)]
         if table == "shares":
             logger.info("扶摇无股本接口, shares 表跳过 (已有数据保留)")
             return pl.DataFrame()

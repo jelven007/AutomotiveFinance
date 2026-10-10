@@ -1,4 +1,0 @@
-# Runtime dependencies used by mootdx quotes/financial modules.
-tdxpy==0.2.7
-tenacity>=8.1,<9
-tqdm>=4.65

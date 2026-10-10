@@ -77,8 +77,9 @@ def _atomic_write_parquet(df: pl.DataFrame, out) -> None:
     *.parquet glob, 不会被扫描误读。Windows 下目标正被并发读取时由
     replace_with_retry 短退避穿过。
     """
+    from app.market_scope import filter_market_frame
     tmp = out.with_name(out.name + ".tmp")
-    df.write_parquet(tmp)
+    filter_market_frame(df).write_parquet(tmp)
     replace_with_retry(tmp, out)
 
 
@@ -123,7 +124,8 @@ def _normalize_daily(df_in, default_symbol: str | None = None) -> pl.DataFrame:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
 
     # 过滤停牌日 (open/high 为 0; close 可能被填充为前收盘价, 不能用全零判断)
-    df = filter_halt_days(df)
+    from app.market_scope import filter_market_frame
+    df = filter_market_frame(filter_halt_days(df))
 
     # 只保留 canonical 列
     keep = [c for c in CANONICAL_DAILY_COLS if c in df.columns]
@@ -214,6 +216,8 @@ def sync_daily_batch(symbols: list[str],
     failed_out: 可选出参。拉取失败的分块标的会追加进该 list, 供上层判定「部分失败」
                 而非静默当成功(某分块断网 → 这些标的本轮未更新, 保持旧数据)。
     """
+    from app.market_scope import removed_market_symbol
+    symbols = [s for s in symbols if not removed_market_symbol(s)]
     provider_name = preferences.get_daily_data_provider()
     if provider_name != "tickflow":
         from app.data_providers import custom as custom_sources
@@ -330,6 +334,10 @@ def sync_and_persist_daily_batch(
     for orig in original:
         orig_by_full.setdefault(resolved.get(orig, orig), orig)
 
+    from app.market_scope import removed_market_symbol
+    skipped_bare.extend(s for s in symbols if removed_market_symbol(s))
+    symbols = [s for s in symbols if not removed_market_symbol(s)]
+    requested = symbols
     if not symbols:
         return _finalize(0)
 
@@ -570,6 +578,8 @@ def sync_adj_factor(symbols: list[str], repo: KlineRepository,
     支持增量: 传 start_time/end_time 只拉取该时间范围内的新除权事件。
     返回 (写入行数, 受影响的 symbol 列表) — 供 enriched 局部重算使用。
     """
+    from app.market_scope import removed_market_symbol
+    symbols = [s for s in symbols if not removed_market_symbol(s)]
     if not symbols:
         return 0, []
 
@@ -820,7 +830,8 @@ def _normalize_minute(df_in, default_symbol: str | None = None) -> pl.DataFrame:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
 
     keep = [c for c in CANONICAL_MINUTE_COLS if c in df.columns]
-    return df.select(keep)
+    from app.market_scope import filter_market_frame
+    return filter_market_frame(df.select(keep))
 
 
 def _compact_klines_to_df(raw, default_symbol: str | None = None) -> pl.DataFrame:
@@ -880,6 +891,8 @@ def _write_minute_partition(df: pl.DataFrame, minute_dir) -> int:
 
     抽自原 sync_and_persist_minute 末尾的循环, 供流式落盘 (每段一次) 与一次性迁移共用。
     """
+    from app.market_scope import filter_market_frame
+    df = filter_market_frame(df)
     if df.is_empty():
         return 0
     df = df.with_columns(pl.col("datetime").dt.date().alias("_trade_date"))
@@ -986,7 +999,8 @@ def _try_custom_minute(
         return (pl.DataFrame(), False)
     try:
         # 时区契约守卫: 插件/自定义源帧同样收口为北京墙钟 (CONTRIBUTING §3.3)
-        df = _enforce_minute_beijing_wallclock(df, source=provider_name)
+        from app.market_scope import filter_market_frame
+        df = filter_market_frame(_enforce_minute_beijing_wallclock(df, source=provider_name))
     except Exception as e:
         logger.warning("custom minute provider %s datetime contract failed: %s",
                        provider_name, e)
@@ -1023,6 +1037,10 @@ def sync_minute_batch(
         不进入全局 out → 内存峰值从「全量」降到「单段」。适用于 sync_and_persist_minute。
         不传时 (如 get_minute_batch 的实时补拉) 保持原契约: 累积进 out 末尾一次性返回。
     """
+    from app.market_scope import removed_market_symbol
+    symbols = [s for s in symbols if not removed_market_symbol(s)]
+    if not symbols:
+        return pl.DataFrame()
     # Custom sources can return millions of rows for a whole-market window.
     # Flush bounded symbol batches through the existing partition writer.
     if (
@@ -1387,6 +1405,8 @@ def fetch_intraday_custom_batch(
     帧统一过北京墙钟守卫 (与 _try_custom_minute 同纪律)。
     返回 (当日分钟K, 请求数); 失败返回空 df 由调用方按空轮处理。
     """
+    from app.market_scope import filter_market_frame, removed_market_symbol
+    symbols = [symbol for symbol in symbols if not removed_market_symbol(symbol)]
     try:
         method = getattr(provider, "get_intraday_batch", None)
         if callable(method):
@@ -1413,7 +1433,7 @@ def fetch_intraday_custom_batch(
     except Exception as e:  # noqa: BLE001
         logger.warning("custom full_minute datetime 契约校验失败 (%s): %s", provider_name, e)
         return (pl.DataFrame(), 0)
-    return (df, max(requests, 1))
+    return (filter_market_frame(df), max(requests, 1))
 
 
 def fetch_intraday_custom_latest(
@@ -1441,7 +1461,8 @@ def fetch_intraday_custom_latest(
     except Exception as e:  # noqa: BLE001
         logger.warning("custom full_minute datetime 契约校验失败 (%s): %s", provider_name, e)
         return (pl.DataFrame(), 0)
-    return (df, 1)
+    from app.market_scope import filter_market_frame
+    return (filter_market_frame(df), 1)
 
 
 def fetch_minute_single(

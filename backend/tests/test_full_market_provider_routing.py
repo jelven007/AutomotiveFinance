@@ -13,7 +13,7 @@ from app.tickflow import pools
 @pytest.mark.parametrize("pool_id,asset", [("CN_Equity_A", "stock"), ("CN_Index", "index")])
 def test_custom_universe_ignores_tickflow_cache_and_client(tmp_path, monkeypatch, pool_id, asset):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
-    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "rustdx")
     target = tmp_path / "pools" / f"{pool_id}.parquet"
     target.parent.mkdir()
     pl.DataFrame({"symbol": ["stale-source"]}).write_parquet(target)
@@ -32,7 +32,7 @@ def test_custom_universe_ignores_tickflow_cache_and_client(tmp_path, monkeypatch
 
 
 def test_unavailable_custom_universe_never_falls_back(monkeypatch):
-    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "rustdx")
 
     def unavailable(_):
         raise ValueError("not installed")
@@ -43,7 +43,7 @@ def test_unavailable_custom_universe_never_falls_back(monkeypatch):
 
 
 def test_whole_market_custom_minutes_flush_bounded_chunks(monkeypatch):
-    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "rustdx")
     calls, segments, progress = [], [], []
 
     def fetch(symbols, **kwargs):
@@ -64,7 +64,7 @@ def test_whole_market_custom_minutes_flush_bounded_chunks(monkeypatch):
 
 
 def test_custom_minute_source_change_aborts_without_tickflow(monkeypatch):
-    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "rustdx")
     monkeypatch.setattr(kline_sync, "_try_custom_minute", lambda *a, **k: (None, True))
     monkeypatch.setattr(kline_sync, "get_client", lambda: pytest.fail("cross-source request"))
     with pytest.raises(RuntimeError, match="数据源"):

@@ -77,7 +77,7 @@ def _daily_market(end: date) -> tuple[pl.DataFrame, dict]:
         "excluded_rows": int(joined["excluded"].sum()),
         "excluded_symbols": joined.filter(pl.col("excluded"))["symbol"].n_unique(),
         "quarantine_rows": joined.filter(
-            pl.col("source") == "mootdx_f10_unknown_quarantine"
+            pl.col("source").str.ends_with("_f10_unknown_quarantine")
         ).height,
     }
     daily = (

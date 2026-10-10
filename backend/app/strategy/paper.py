@@ -389,6 +389,9 @@ def create_order(
         symbol = (symbol or "").strip()
         if not symbol:
             return None, "symbol 不能为空"
+        from app.market_scope import removed_market_symbol
+        if removed_market_symbol(symbol):
+            return None, "模拟交易仅支持沪深市场"
         if asset_type is None:
             asset_type = "etf" if symbol.endswith((".SH", ".SZ")) and symbol.split(".")[0].startswith(("51", "56", "58", "15")) else "stock"
 

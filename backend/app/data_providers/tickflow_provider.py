@@ -9,11 +9,12 @@ import polars as pl
 
 from app.data_providers.base import AssetType, ProviderCapabilities
 from app.data_providers.normalizer import normalize_adj_factors, normalize_daily, normalize_instruments
+from app.market_scope import filter_market_frame, removed_market_symbol
 from app.tickflow.client import get_client
 
 logger = logging.getLogger(__name__)
 
-_EXCHANGES = ["SH", "SZ", "BJ"]
+_EXCHANGES = ["SH", "SZ"]
 
 
 class TickFlowProvider:
@@ -47,6 +48,7 @@ class TickFlowProvider:
         end_time: datetime | None,
         asset_type: AssetType,  # noqa: ARG002
     ) -> pl.DataFrame:
+        symbols = [s for s in symbols if not removed_market_symbol(s)]
         if not symbols:
             return pl.DataFrame()
         tf = get_client()
@@ -80,6 +82,7 @@ class TickFlowProvider:
         end_time: datetime | None,
         asset_type: AssetType,  # noqa: ARG002
     ) -> pl.DataFrame:
+        symbols = [s for s in symbols if not removed_market_symbol(s)]
         if not symbols:
             return pl.DataFrame()
         tf = get_client()
@@ -113,16 +116,21 @@ class TickFlowProvider:
         tf = get_client()
         if universes and symbols:
             raise ValueError("TickFlow realtime accepts either universes or symbols, not both")
+        if symbols:
+            symbols = [s for s in symbols if not removed_market_symbol(s)]
         if universes:
             resp = tf.quotes.get_by_universes(universes=universes)
         elif symbols:
             resp = tf.quotes.get(symbols=symbols)
         else:
             return pl.DataFrame()
-        return pl.DataFrame(resp or [])
+        return filter_market_frame(pl.DataFrame(resp or []))
 
     def get_depth_batch(self, symbols: list[str]) -> dict[str, dict]:
+        symbols = [s for s in symbols if not removed_market_symbol(s)]
         if not symbols:
             return {}
         data = get_client().depth.batch(symbols)
-        return data if isinstance(data, dict) else {}
+        return {
+            s: row for s, row in data.items() if not removed_market_symbol(s)
+        } if isinstance(data, dict) else {}

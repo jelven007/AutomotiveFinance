@@ -42,7 +42,7 @@ TSP 是数据工程优先的模块化单体：
 
 ### 2.2 外部依赖
 
-- TickFlow、mootdx、fuyao 或自定义 Provider。
+- TickFlow、rustdx、fuyao 或自定义 Provider。
 - 用户配置的 AI 兼容接口。
 - 飞书、企业微信等通知端点。
 - GitHub Actions、GHCR 和 GitHub Release。
@@ -260,7 +260,7 @@ TanStack Query。写操作必须同时考虑：
 期间不会由外部调度系统自动补跑所有任务；恢复后应按
 [运维手册](./operations.md)检查并人工补齐缺口。
 
-竞价终态快照当前是 mootdx 专属实现，要求实时行情生效源为 `mootdx`，不应仅凭
+竞价终态快照默认使用 rustdx，并要求当前 Provider 实现 `get_auction_snapshot`，不应仅凭
 其他 Provider 声明了 `realtime` 就视为可用。
 
 数据管道与因子挖掘的持久任务共享 `services/task_state.py` 状态机：
@@ -318,7 +318,7 @@ URL、查询参数、请求体或认证头，避免高基数和敏感信息泄�
 | Provider 不支持能力 | 页面明确显示不可用，上层不发起伪调用 |
 | AI 或通知服务失败 | 核心数据和研究功能继续工作，记录可诊断错误 |
 | 调度任务失败 | 任务状态和日志保留失败原因，不发布半成品 |
-| Provider 路由漂移 | 健康检查暴露不可用能力；mootdx 与其他源混用时明确告警，不自动改写配置 |
+| Provider 路由漂移 | 健康检查暴露不可用能力；rustdx 与其他源混用时明确告警，不自动改写配置 |
 | SSE 断连 | 客户端重连并重新查询当前状态，不依赖丢失事件恢复数据 |
 | 主进程重启 | 持久化状态恢复；纯内存 ticket、连接和短期确认失效 |
 | 数据文件损坏 | 停止相关任务，使用备份恢复，不自动猜测修复金融数据 |

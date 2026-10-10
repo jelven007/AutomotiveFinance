@@ -484,8 +484,9 @@ def normalize_symbol(series: pl.Series, lookup: dict[str, str] | None = None) ->
     """将 symbol 列标准化为 代码.交易所 格式。
 
     优先使用 instruments 维表查找 code → symbol，确保 100% 准确。
-    查不到时按规则兜底：6开头 → .SH，其余 → .SZ。
+    查不到时只推断合法沪深股票代码; 其他维度原样保留。
     """
+    from app.data_providers.instrument_status import current_a_share_identity
     _lookup = lookup or {}
 
     def _fix_one(val: str) -> str:
@@ -500,11 +501,8 @@ def normalize_symbol(series: pl.Series, lookup: dict[str, str] | None = None) ->
             mapped = _lookup.get(val)
             if mapped:
                 return mapped
-            # 兜底规则
-            if val.startswith(("6",)):
-                return f"{val}.SH"
-            else:
-                return f"{val}.SZ"
+            identity = current_a_share_identity(val)
+            return identity[0] if identity else val
         return val
 
     return series.map_elements(_fix_one, return_dtype=pl.Utf8)
@@ -544,7 +542,8 @@ def apply_config_mapping(df: pl.DataFrame, config: ExtConfig, data_dir: Path) ->
         lookup = build_code_lookup(data_dir)
         df = df.with_columns(normalize_symbol(df["symbol"].cast(pl.Utf8), lookup))
 
-    return df
+    from app.market_scope import filter_market_frame
+    return filter_market_frame(df)
 
 
 # 编码识别与转换的分块大小，与 ext_data 上传写入用的块大小一致。
@@ -722,7 +721,8 @@ def write_ext_parquet(
             except Exception as e:
                 logger.warning("扩展表 %s 合并去重失败, 将覆盖写入: %s", config.id, e)
 
-    df = cast_df_to_schema(df, config.fields)
+    from app.market_scope import filter_market_frame
+    df = cast_df_to_schema(filter_market_frame(df), config.fields)
     if config.mode != "snapshot":
         # 日内序列表: 分区内按 [symbol, 时间列] 升序落盘。读侧 (screener._load_ext_value_maps、
         # ext_factors 因子帧、板块资金流) 按 symbol unique(keep="last") 收敛到一行, 只认行序;

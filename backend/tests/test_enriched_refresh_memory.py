@@ -12,7 +12,7 @@ def history(monkeypatch):
     monkeypatch.setattr(pipeline, "_custom_signal_exprs", {
         "signal_test_previous": (pl.col("close") > pl.col("close").shift(1).over("symbol")),
     })
-    symbols = ["600000.SH", "300001.SZ", "688001.SH", "000001.SZ", "920001.BJ"]
+    symbols = ["600000.SH", "300001.SZ", "688001.SH", "000001.SZ", "003001.SZ"]
     rows = []
     for i, symbol in enumerate(symbols):
         for day in range(160):

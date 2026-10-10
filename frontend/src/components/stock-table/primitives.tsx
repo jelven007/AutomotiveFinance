@@ -12,13 +12,13 @@ import type { ReactNode } from 'react'
 import { fmtPrice, fmtPct, fmtBigNum, fmtVolume, priceColorClass, cnDateFromUtc } from '@/lib/format'
 import type { ColumnConfig } from '@/lib/list-columns'
 import { NUM_CELL_CLASS } from '@/lib/stock-table'
+import { getBoardType } from '@/lib/board'
 
 // ===== 板块标识（自选/策略页统一口径） =====
 
 export function boardTag(symbol: string): { label: string; color: string } | null {
-  if (/^(300|301)/.test(symbol)) return { label: '创', color: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
-  if (/^688/.test(symbol))       return { label: '科', color: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
-  if (/\.BJ$/.test(symbol))      return { label: '北', color: 'text-purple-400 bg-purple-400/12 border-purple-400/25' }
+  if (getBoardType(symbol) === '创业板') return { label: '创', color: 'text-[#f97316] bg-[#f97316]/12 border-[#f97316]/25' }
+  if (getBoardType(symbol) === '科创板') return { label: '科', color: 'text-cyan-400 bg-cyan-400/12 border-cyan-400/25' }
   return null
 }
 
@@ -125,7 +125,7 @@ export function renderBuiltinDataCell(r: any, col: ColumnConfig): ReactNode | nu
     case 'momentum_20d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.momentum_20d)}`}>{fmtPct(r.momentum_20d)}</td>
     case 'momentum_30d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.momentum_30d)}`}>{fmtPct(r.momentum_30d)}</td>
     case 'momentum_60d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.momentum_60d)}`}>{fmtPct(r.momentum_60d)}</td>
-    case 'deviate_3d':  return <td key={col.id} className={`${numCls} ${priceColorClass(r.deviate_3d)}`} title="偏离值 = 个股3日涨跌幅 − 对应指数 (主板±20%/创业科创±30%/北交所±40% 触发)">{fmtPct(r.deviate_3d)}</td>
+    case 'deviate_3d':  return <td key={col.id} className={`${numCls} ${priceColorClass(r.deviate_3d)}`} title="偏离值 = 个股3日涨跌幅 − 对应指数 (主板±20%/创业科创±30% 触发)">{fmtPct(r.deviate_3d)}</td>
     case 'deviate_10d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.deviate_10d)}`} title="10日累计偏离 (+100% 触发严重异常波动)">{fmtPct(r.deviate_10d)}</td>
     case 'deviate_30d': return <td key={col.id} className={`${numCls} ${priceColorClass(r.deviate_30d)}`} title="30日累计偏离 (+200% 触发严重异常波动)">{fmtPct(r.deviate_30d)}</td>
     // 连板

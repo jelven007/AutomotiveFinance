@@ -11,7 +11,7 @@
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 
 /** 持久化结构版本: 序列化结构变化时递增, 旧缓存整体作废 */
-export const PERSIST_BUSTER = 'v1'
+export const PERSIST_BUSTER = 'v2-sh-sz'
 
 /** 允许持久化的查询键首段 (对齐 lib/queryKeys.ts 各工厂首段与个别内联键) */
 const PERSISTABLE_KEY_ROOTS = new Set([

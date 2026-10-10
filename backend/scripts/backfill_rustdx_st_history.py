@@ -3,7 +3,7 @@
 
 Run from ``backend/``:
 
-    .venv/bin/python -m scripts.backfill_mootdx_st_history --end 2026-09-30
+    .venv/bin/python -m scripts.backfill_rustdx_st_history --end 2026-09-30
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from pathlib import Path
 import polars as pl
 
 from app.instrument_history import history_path, load_instrument_history
-from app.plugins.mootdx.client import MootdxClient
 from app.plugins.rustdx.client import RustdxClient
 from app.services.fs_utils import atomic_write_parquet, atomic_write_text
 from app.services.st_history_backfill import (
@@ -34,18 +33,18 @@ from app.services.st_history_backfill import (
 logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 GOVERNANCE_DIR = DATA_DIR / "governance" / "st_history"
-RAW_PATH = GOVERNANCE_DIR / "mootdx_f10_latest.parquet"
+RAW_PATH = GOVERNANCE_DIR / "rustdx_f10_latest.parquet"
 EVENTS_PATH = GOVERNANCE_DIR / "events.parquet"
 GOVERNED_HISTORY_PATH = GOVERNANCE_DIR / "history_governed.parquet"
 MANIFEST_PATH = GOVERNANCE_DIR / "manifest.json"
 REPORT_PATH = GOVERNANCE_DIR / "report.md"
 _thread_local = threading.local()
-_clients: list[MootdxClient | RustdxClient] = []
+_clients: list[RustdxClient] = []
 _clients_lock = threading.Lock()
 _client_factory = RustdxClient
 
 
-def _client() -> MootdxClient | RustdxClient:
+def _client() -> RustdxClient:
     client = getattr(_thread_local, "client", None)
     if client is None:
         client = _client_factory()
@@ -130,13 +129,10 @@ def _coverage(end: date) -> pl.DataFrame:
     )
 
 
-def run(*, end: date, workers: int, retries: int, checkpoint_every: int, provider: str = "rustdx") -> dict:
-    global _client_factory
-    if provider not in {"rustdx", "mootdx"}:
-        raise ValueError(f"unsupported F10 provider: {provider}")
-    _client_factory = RustdxClient if provider == "rustdx" else MootdxClient
+def run(*, end: date, workers: int, retries: int, checkpoint_every: int) -> dict:
+    provider = "rustdx"
     workers = max(1, min(workers, 35))
-    raw_path = RAW_PATH if provider == "mootdx" else GOVERNANCE_DIR / "rustdx_f10_latest.parquet"
+    raw_path = RAW_PATH
     GOVERNANCE_DIR.mkdir(parents=True, exist_ok=True)
     coverage = _coverage(end)
     symbols = coverage["symbol"].cast(pl.String).to_list()
@@ -337,7 +333,6 @@ def run(*, end: date, workers: int, retries: int, checkpoint_every: int, provide
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="回填 TDX F10 历史 ST/*ST 时点区间")
-    parser.add_argument("--provider", choices=("rustdx", "mootdx"), default="rustdx")
     parser.add_argument("--end", type=date.fromisoformat, required=True, help="治理行情截止日")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--retries", type=int, default=3)
@@ -353,7 +348,6 @@ def main() -> None:
         workers=args.workers,
         retries=args.retries,
         checkpoint_every=args.checkpoint_every,
-        provider=args.provider,
     )
     logger.info("ST governance complete: %s", json.dumps(manifest, ensure_ascii=False))
 

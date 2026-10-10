@@ -102,7 +102,7 @@ def test_install_plugin_supports_no_deps_requirements(monkeypatch, tmp_path):
     """冲突包可单独 --no-deps 安装, 常规依赖仍按 requirements.txt 解析。"""
     pdir = _fake_python_plugin(monkeypatch, tmp_path)
     no_deps = pdir / "requirements-no-deps.txt"
-    no_deps.write_text("mootdx==0.11.7\n", encoding="utf-8")
+    no_deps.write_text("example-addon==1.0.0\n", encoding="utf-8")
     calls = _patch_uv_install(monkeypatch, [0, 0])
 
     ok, msg = loader.install_plugin("baostock")
@@ -127,9 +127,9 @@ def test_uninstall_plugin_includes_no_deps_packages(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(cmd, 0)
 
     pdir = _fake_python_plugin(monkeypatch, tmp_path)
-    (pdir / "requirements.txt").write_text("tdxpy==0.2.7\n", encoding="utf-8")
+    (pdir / "requirements.txt").write_text("example-core==1.0.0\n", encoding="utf-8")
     (pdir / "requirements-no-deps.txt").write_text(
-        "mootdx==0.11.7\n# comment\ntdxpy==0.2.7\n",
+        "example-addon==1.0.0\n# comment\nexample-core==1.0.0\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(loader.shutil, "which", fake_which)
@@ -139,5 +139,5 @@ def test_uninstall_plugin_includes_no_deps_packages(monkeypatch, tmp_path):
 
     assert ok, msg
     assert calls
-    assert calls[0].count("tdxpy") == 1
-    assert calls[0].count("mootdx") == 1
+    assert calls[0].count("example-core") == 1
+    assert calls[0].count("example-addon") == 1

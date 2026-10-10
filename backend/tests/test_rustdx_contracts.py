@@ -1,16 +1,13 @@
-"""mootdx provider contracts and normalization tests without network access."""
+"""rustdx provider contracts and normalization tests without network access."""
 
 from __future__ import annotations
 
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 
 import pytest
 
-from app.plugins.mootdx.client import MootdxError
-from app.plugins.mootdx.provider import MootdxProvider
+from app.plugins.rustdx.client import RustdxError
+from app.plugins.rustdx.provider import RustdxProvider
 
 
 class _FakeClient:
@@ -62,8 +59,8 @@ class _FakeClient:
         return list(self.history_rows)
 
 
-def _provider(fake: _FakeClient) -> MootdxProvider:
-    return MootdxProvider(client_factory=lambda: fake)
+def _provider(fake: _FakeClient) -> RustdxProvider:
+    return RustdxProvider(client_factory=lambda: fake)
 
 
 def test_instruments_keeps_only_current_supported_a_share_boards():
@@ -96,104 +93,6 @@ def test_instruments_keeps_only_current_supported_a_share_boards():
     assert fake.stock_calls == [0, 1]
     assert rows[0]["ext"]["tick_size"] == 0.01
     assert rows[0]["ext"]["float_shares"] is None
-
-
-class _PersistentFakeClient:
-    def __init__(self, *, fail: bool = False, delay: float = 0.0) -> None:
-        self.fail = fail
-        self.delay = delay
-        self.calls: list[list[str]] = []
-        self.closed = False
-        self.active = 0
-        self.max_active = 0
-        self._lock = threading.Lock()
-
-    def quotes(self, symbols):
-        with self._lock:
-            self.active += 1
-            self.max_active = max(self.max_active, self.active)
-        try:
-            self.calls.append(list(symbols))
-            if self.delay:
-                time.sleep(self.delay)
-            if self.fail:
-                raise MootdxError("offline")
-            return [
-                {
-                    "market": 0,
-                    "code": symbol.split(".", 1)[0],
-                    "price": 10.0,
-                    "last_close": 9.9,
-                }
-                for symbol in symbols
-            ]
-        finally:
-            with self._lock:
-                self.active -= 1
-
-    def close(self):
-        self.closed = True
-
-
-def test_full_market_quotes_use_and_reuse_35_persistent_connections(monkeypatch):
-    monkeypatch.delenv("MOOTDX_QUOTE_CONNECTIONS", raising=False)
-    clients: list[_PersistentFakeClient] = []
-    clients_lock = threading.Lock()
-
-    def factory():
-        client = _PersistentFakeClient()
-        with clients_lock:
-            clients.append(client)
-        return client
-
-    provider = MootdxProvider(client_factory=factory)
-    symbols = [f"{index:06d}.SZ" for index in range(5_484)]
-
-    rows = provider._quote_rows(symbols, include_names=False)
-
-    assert [row["symbol"] for row in rows] == symbols
-    assert len(clients) == 35
-    assert sum(len(client.calls) for client in clients) == 69
-    assert sorted(len(client.calls) for client in clients) == [1] + [2] * 34
-
-    provider._quote_rows(symbols[:80], include_names=False)
-    assert len(clients) == 35
-    assert sum(len(client.calls) for client in clients) == 70
-
-    provider.close()
-    assert all(client.closed for client in clients)
-
-
-def test_quote_worker_replaces_failed_connection_and_reuses_replacement(monkeypatch):
-    monkeypatch.setenv("MOOTDX_QUOTE_CONNECTIONS", "1")
-    failed = _PersistentFakeClient(fail=True)
-    healthy = _PersistentFakeClient()
-    clients = [failed, healthy]
-
-    provider = MootdxProvider(client_factory=lambda: clients.pop(0))
-    first = provider._quote_rows(["000001.SZ"], include_names=False)
-    replacement = provider._quote_pool._workers[0]._client
-
-    assert [row["symbol"] for row in first] == ["000001.SZ"]
-    assert failed.closed is True
-    assert replacement is healthy
-    assert provider._quote_rows(["000002.SZ"], include_names=False)
-    assert healthy.calls == [["000001.SZ"], ["000002.SZ"]]
-
-
-def test_quote_cycles_do_not_overlap(monkeypatch):
-    monkeypatch.setenv("MOOTDX_QUOTE_CONNECTIONS", "1")
-    client = _PersistentFakeClient(delay=0.03)
-    provider = MootdxProvider(client_factory=lambda: client)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [
-            pool.submit(provider._quote_rows, ["000001.SZ"], include_names=False)
-            for _ in range(2)
-        ]
-        assert all(future.result() for future in futures)
-
-    assert client.max_active == 1
 
 
 def test_auction_snapshot_preserves_server_time_and_top_of_book():
@@ -269,7 +168,7 @@ def test_daily_uses_raw_prices_filters_window_and_preserves_tdx_lots():
 
 
 def test_minute_keeps_beijing_wallclock_and_converts_tdx_shares(monkeypatch):
-    monkeypatch.setenv("MOOTDX_WORKERS", "1")
+    monkeypatch.setenv("RUSTDX_WORKERS", "1")
     fake = _FakeClient()
     fake.bars_by_frequency[8] = [
         {
@@ -446,9 +345,9 @@ def test_financial_snapshot_without_report_period_is_not_used_as_history():
 
 
 def test_full_minute_uses_same_real_bar_path(monkeypatch):
-    monkeypatch.setenv("MOOTDX_WORKERS", "1")
+    monkeypatch.setenv("RUSTDX_WORKERS", "1")
     monkeypatch.setattr(
-        "app.plugins.mootdx.provider.cn_now", lambda: datetime(2026, 10, 6, 15)
+        "app.plugins.rustdx.provider.cn_now", lambda: datetime(2026, 10, 6, 15)
     )
     fake = _FakeClient()
     fake.bars_by_frequency[8] = [
@@ -474,8 +373,8 @@ def test_plugin_manifest_declares_all_routable_datasets():
     from app.data_providers import custom as custom_sources
 
     plugins = {plugin["name"]: plugin for plugin in custom_sources.list_plugins()}
-    assert "mootdx" in plugins
-    assert set(plugins["mootdx"]["datasets"]) == {
+    assert "rustdx" in plugins
+    assert set(plugins["rustdx"]["datasets"]) == {
         "realtime",
         "daily",
         "adj_factor",
@@ -484,7 +383,7 @@ def test_plugin_manifest_declares_all_routable_datasets():
         "financial",
         "full_minute",
     }
-    assert custom_sources.is_builtin("mootdx")
+    assert custom_sources.is_builtin("rustdx")
 
 
 def test_missing_depth_volume_stays_unknown():
@@ -508,7 +407,7 @@ def test_index_and_stock_with_same_code_keep_exchange():
 
 
 def test_utc_window_is_converted_before_minute_filtering(monkeypatch):
-    monkeypatch.setenv("MOOTDX_MAX_PAGES", "invalid")
+    monkeypatch.setenv("RUSTDX_MAX_PAGES", "invalid")
     fake = _FakeClient()
     fake.bars_by_frequency[8] = [
         {"datetime": "2026-09-30 09:31", "close": 10, "vol": 100, "amount": 100_000}
@@ -543,7 +442,7 @@ def test_financial_cumulative_fields_zero_and_unknown_announcement():
 def test_financial_failure_is_retried_and_success_cache_expires(monkeypatch):
     fake = _FakeClient()
     clock = [0.0]
-    monkeypatch.setattr("app.plugins.mootdx.provider.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("app.plugins.rustdx.provider.time.monotonic", lambda: clock[0])
     provider = _provider(fake)
     assert provider.get_financials("metrics", ["600519.SH"]).is_empty()
     fake.history_rows = [
@@ -559,7 +458,7 @@ def test_financial_failure_is_retried_and_success_cache_expires(monkeypatch):
 
 
 def test_same_day_adjustment_events_are_combined(monkeypatch):
-    monkeypatch.setattr("app.plugins.mootdx.provider.cn_now", lambda: datetime(2026, 7, 2))
+    monkeypatch.setattr("app.plugins.rustdx.provider.cn_now", lambda: datetime(2026, 7, 2))
     fake = _FakeClient()
     fake.xdxr_rows = [
         {"year": 2026, "month": 7, "day": 1, "category": 1, "fenhong": 2},
@@ -576,7 +475,7 @@ def test_same_day_adjustment_events_are_combined(monkeypatch):
 
 
 def test_repeated_full_bar_page_stops_pagination(monkeypatch):
-    monkeypatch.setenv("MOOTDX_MAX_PAGES", "80")
+    monkeypatch.setenv("RUSTDX_MAX_PAGES", "80")
     fake = _FakeClient()
     calls = []
 
@@ -605,6 +504,7 @@ def test_instruments_get_listing_and_current_share_capital():
         "ipo_date": 20010827, "liutongguben": 1_250_081_562.5, "zongguben": 1_250_081_562.5,
     }]
     provider = _provider(fake)
+    provider.enrich_instruments_with_finance = True
     row = provider.get_instruments()[1]
     assert row["ext"]["listing_date"] == "2001-08-27"
     assert row["ext"]["float_shares"] == 1_250_081_562.5
@@ -623,28 +523,16 @@ def test_partial_instrument_catalog_is_not_published_or_cached():
     ]
 
 
-def test_client_rejects_truncated_security_list():
-    from app.plugins.mootdx.client import MootdxClient, MootdxError
-
-    client = MootdxClient()
-    pages = iter([[{"code": "600519"}], []])
-    client._invoke = lambda method, **kwargs: 1001 if method == "stock_count" else next(pages)
-    with pytest.raises(MootdxError, match="不完整"):
-        client.stocks(1)
-
-
 @pytest.mark.parametrize("dataset", ["daily", "minute"])
 def test_protocol_outage_stops_after_three_failures_but_preserves_received_rows(dataset, monkeypatch):
-    from app.plugins.mootdx.client import MootdxError
-
-    monkeypatch.setenv("MOOTDX_WORKERS", "1")
+    monkeypatch.setenv("RUSTDX_WORKERS", "1")
     fake = _FakeClient()
     calls = []
 
     def bars(symbol, **kwargs):
         calls.append(symbol)
         if symbol != "600000.SH":
-            raise MootdxError("offline")
+            raise RustdxError("offline")
         return [{
             "datetime": "2026-09-30 15:00", "open": 10, "high": 10,
             "low": 10, "close": 10, "vol": 100, "amount": 100_000,

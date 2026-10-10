@@ -96,7 +96,8 @@ def _read_entries() -> pl.DataFrame:
         df = df.with_columns(pl.lit("", dtype=pl.Utf8).alias("added_at"))
     if "note" not in df.columns:
         df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("note"))
-    return df.select(list(_ENTRY_SCHEMA))
+    from app.market_scope import filter_market_frame
+    return filter_market_frame(df.select(list(_ENTRY_SCHEMA)))
 
 
 def _write_entries(df: pl.DataFrame) -> None:
@@ -191,6 +192,8 @@ def add_batch(
     多组（如批量导入同时并入多个分组）。重复添加的标的保留既有全部分组，
     仅把尚未属于的传入分组并入；二者可同时使用、内部去重。
     """
+    from app.market_scope import removed_market_symbol
+    symbols = [symbol for symbol in symbols if not removed_market_symbol(symbol)]
     with _LOCK:
         groups = _read_groups()
         # 合并单/多组参数并去重；逐组校验存在性

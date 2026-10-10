@@ -807,7 +807,7 @@ _TABLE_FIELD_DESC: dict[str, dict[str, str]] = {
         "symbol": "股票代码",
         "name": "股票名称",
         "code": "股票编码(纯数字)",
-        "exchange": "交易所(SH/SZ/BJ)",
+        "exchange": "交易所(SH/SZ)",
         "region": "地区",
         "type": "证券类型",
         "listing_date": "上市日期",

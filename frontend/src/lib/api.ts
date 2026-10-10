@@ -1997,7 +1997,7 @@ export interface Preferences {
   daily_data_provider?: string
   adj_factor_provider?: string
   minute_data_provider?: string
-  /** 全量分钟 (盘中全市场分钟落盘) 生效源; 默认 mootdx */
+  /** 全量分钟 (盘中全市场分钟落盘) 生效源; 默认 rustdx */
   full_minute_data_provider?: string
   /** 分钟源 1 分钟历史深度(交易日); null/缺省 = 深历史 (如 tickflow)。分时档位据此收窄 */
   minute_history_days?: number | null

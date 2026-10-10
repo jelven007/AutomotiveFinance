@@ -42,7 +42,7 @@ def test_scd2_history_tracks_changes_and_delisting_tombstones(tmp_path) -> None:
             ("000001.SZ", "平安银行", "1991-04-03"),
         ),
         as_of=first,
-        source="mootdx",
+        source="rustdx",
         available_at="2026-07-01T01:10:00+00:00",
     ) == 2
     assert update_instrument_history(
@@ -52,7 +52,7 @@ def test_scd2_history_tracks_changes_and_delisting_tombstones(tmp_path) -> None:
             ("300001.SZ", "特锐德", "2009-10-30"),
         ),
         as_of=second,
-        source="mootdx",
+        source="rustdx",
         available_at="2026-07-02T01:10:00+00:00",
     ) == 3
 
@@ -76,14 +76,14 @@ def test_same_day_refresh_replaces_that_days_observation(tmp_path) -> None:
         tmp_path,
         _instruments(("600001.SH", "示例股份", "2020-01-01")),
         as_of=day,
-        source="mootdx",
+        source="rustdx",
         available_at="2026-07-01T01:10:00+00:00",
     )
     update_instrument_history(
         tmp_path,
         _instruments(("600001.SH", "*ST示例", "2020-01-01")),
         as_of=day,
-        source="mootdx",
+        source="rustdx",
         available_at="2026-07-01T01:12:00+00:00",
     )
 
@@ -99,14 +99,14 @@ def test_asof_join_never_uses_future_status(tmp_path) -> None:
         tmp_path,
         _instruments(("600001.SH", "示例股份", "2020-01-01")),
         as_of=date(2026, 7, 2),
-        source="mootdx",
+        source="rustdx",
         available_at="2026-07-02T01:10:00+00:00",
     )
     update_instrument_history(
         tmp_path,
         _instruments(("600001.SH", "*ST示例", "2020-01-01")),
         as_of=date(2026, 7, 6),
-        source="mootdx",
+        source="rustdx",
         available_at="2026-07-06T01:10:00+00:00",
     )
     rows = pl.DataFrame(
@@ -132,7 +132,7 @@ def test_out_of_order_snapshot_is_rejected(tmp_path) -> None:
         tmp_path,
         _instruments(("600001.SH", "示例股份", "2020-01-01")),
         as_of=date(2026, 7, 2),
-        source="mootdx",
+        source="rustdx",
     )
 
     with pytest.raises(InstrumentHistoryError, match="predates"):
@@ -140,7 +140,7 @@ def test_out_of_order_snapshot_is_rejected(tmp_path) -> None:
             tmp_path,
             _instruments(("600001.SH", "示例股份", "2020-01-01")),
             as_of=date(2026, 7, 1),
-            source="mootdx",
+            source="rustdx",
         )
 
 
@@ -153,7 +153,7 @@ def test_instrument_sync_persists_current_and_history(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(instrument_sync, "cn_today", lambda: date(2026, 7, 2))
     monkeypatch.setattr(
         "app.services.preferences.get_daily_data_provider",
-        lambda: "mootdx",
+        lambda: "rustdx",
     )
 
     assert instrument_sync.sync_instruments(tmp_path) == 1
@@ -163,7 +163,7 @@ def test_instrument_sync_persists_current_and_history(tmp_path, monkeypatch) -> 
     assert current["as_of"][0] == date(2026, 7, 2)
     assert history.select(
         "symbol", "valid_from", "is_risk_warning", "is_listed", "source"
-    ).row(0) == ("600001.SH", date(2026, 7, 2), True, True, "mootdx")
+    ).row(0) == ("600001.SH", date(2026, 7, 2), True, True, "rustdx")
 
 
 def test_daily_stock_pool_replaces_current_rows_and_tombstones_removed_symbols(
@@ -188,7 +188,7 @@ def test_daily_stock_pool_replaces_current_rows_and_tombstones_removed_symbols(
     monkeypatch.setattr(instrument_sync, "cn_today", lambda: state["day"])
     monkeypatch.setattr(
         "app.services.preferences.get_daily_data_provider",
-        lambda: "mootdx",
+        lambda: "rustdx",
     )
 
     assert instrument_sync.sync_instruments(tmp_path) == 2
@@ -223,7 +223,7 @@ def test_quote_name_enrichment_updates_same_day_history(tmp_path, monkeypatch) -
     ).write_parquet(current_path)
     monkeypatch.setattr(
         "app.services.preferences.get_daily_data_provider",
-        lambda: "mootdx",
+        lambda: "rustdx",
     )
     monkeypatch.setattr(instrument_sync, "cn_today", lambda: date(2026, 7, 2))
 
@@ -243,13 +243,13 @@ def test_limit_signals_use_status_effective_on_each_trade_date(tmp_path) -> None
         tmp_path,
         _instruments(("600001.SH", "示例股份", "2020-01-01")),
         as_of=date(2026, 7, 2),
-        source="mootdx",
+        source="rustdx",
     )
     update_instrument_history(
         tmp_path,
         _instruments(("600001.SH", "*ST示例", "2020-01-01")),
         as_of=date(2026, 7, 3),
-        source="mootdx",
+        source="rustdx",
     )
     bars = pl.DataFrame(
         {
@@ -333,13 +333,13 @@ def test_parquet_matrix_overlays_history_on_legacy_schema(tmp_path) -> None:
         tmp_path,
         _instruments(("600001.SH", "示例股份", "2020-01-01")),
         as_of=date(2026, 7, 2),
-        source="mootdx",
+        source="rustdx",
     )
     update_instrument_history(
         tmp_path,
         _instruments(("600001.SH", "*ST示例", "2020-01-01")),
         as_of=date(2026, 7, 3),
-        source="mootdx",
+        source="rustdx",
     )
 
     market = load_market_data_matrix_from_parquet(
@@ -365,7 +365,7 @@ def test_paper_limit_uses_status_effective_on_fill_date(tmp_path) -> None:
         tmp_path,
         _instruments(("600001.SH", "*ST示例", "2020-01-01")),
         as_of=date(2026, 7, 3),
-        source="mootdx",
+        source="rustdx",
     )
 
     assert paper._risk_warning_on(tmp_path, "600001.SH", date(2026, 7, 3)) is True

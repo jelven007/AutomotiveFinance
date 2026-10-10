@@ -729,13 +729,13 @@ def test_calendar_follows_selected_daily_provider_index_bars(monkeypatch):
         )
     )
     fake = SimpleNamespace(
-        is_custom_provider=lambda name: name == "mootdx",
+        is_custom_provider=lambda name: name == "rustdx",
         get_provider=lambda name: provider,
         provider_has_dataset=lambda name, dataset: dataset == "daily",
     )
     monkeypatch.setattr(app.data_providers, "custom", fake)
     monkeypatch.setattr(
-        "app.services.preferences.get_daily_data_provider", lambda: "mootdx"
+        "app.services.preferences.get_daily_data_provider", lambda: "rustdx"
     )
     di._CAL = (0.0, None)
 

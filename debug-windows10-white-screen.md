@@ -87,7 +87,7 @@ Local automated evidence:
 - Backend tests: `2721 passed, 7 skipped`.
 - Frontend tests: `112 passed`; ESLint and production build passed.
 - macOS PyInstaller output contains `_internal/pywebview-6.2.1.dist-info`.
-- The frozen executable started v0.3.7, activated all seven mootdx capabilities, emitted
+- The frozen executable started v0.3.7, activated all seven market-data capabilities, emitted
   `DESKTOP_SMOKE_TEST_OK`, shut down cleanly, and exited with code 0.
 
 Pending:
@@ -98,7 +98,7 @@ Pending:
 ### Windows CI Attempt 1
 - Run `37946068047` passed all backend/frontend quality gates, PyInstaller packaging, Polars
   runtime checks, WebView2 signature verification, installer generation, and portable smoke.
-- The installed executable started v0.3.7, activated all seven mootdx capabilities, selected the
+- The installed executable started v0.3.7, activated all seven market-data capabilities, selected the
   real GUI path, and emitted `DESKTOP_SMOKE_TEST_OK`.
 - The GUI quality gate correctly blocked publication because pywebview's `loaded` event fired
   before React had populated `document.body.innerText`; the first probe reported

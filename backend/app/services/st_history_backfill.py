@@ -129,7 +129,7 @@ def build_governed_history(
     quarantined_symbols: set[str],
     as_of: date,
     available_at: datetime | str | None = None,
-    source_prefix: str = "mootdx_f10",
+    source_prefix: str = "rustdx_f10",
 ) -> pl.DataFrame:
     """Build SCD2 status intervals covering every symbol with daily data.
 

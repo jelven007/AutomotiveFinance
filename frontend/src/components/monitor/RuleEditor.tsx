@@ -289,7 +289,7 @@ export function RuleEditor({ rule, preset, simple, onClose, onSaved }: Props) {
     setWatchMenuOpen(false)
   }
 
-  // ── 标的标签: 名称 + 板标(创/科/北) + 代码, 可逐个删除 ──
+  // ── 标的标签: 名称 + 板标(创/科) + 代码, 可逐个删除 ──
   const [symbolsExpanded, setSymbolsExpanded] = useState(false)
   const symbolsKey = draft.symbols.join(',')
   // 名称映射: 本地即时缓存(搜索/自选数据) 优先, 缺失的由批量名称接口补齐

@@ -54,6 +54,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -321,9 +322,8 @@ dependencies = [
 
 [[package]]
 name = "rustdx-complete"
-version = "1.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5abe90b81bd1f07e832de8144b63ff6e20e89928a1050fcb88dcdaf2f4d61b7"
+version = "1.12.0"
+source = "git+https://github.com/jelven007/rustdx.git?rev=fac771a18cd218c90852254e59b040874d156722#fac771a18cd218c90852254e59b040874d156722"
 dependencies = [
  "chrono",
  "encoding_rs",

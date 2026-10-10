@@ -15,6 +15,8 @@ use std::time::Duration;
 
 const QUOTE_BATCH_SIZE: usize = 60;
 const MAX_CONNECTIONS: usize = 35;
+const RUSTDX_VERSION: &str = "1.12.0";
+const RUSTDX_SOURCE_REV: &str = "fac771a18cd218c90852254e59b040874d156722";
 
 fn validate_security(market: u16, code: &str) -> PyResult<()> {
     if !matches!(market, 0 | 1) || code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
@@ -460,6 +462,8 @@ impl RustdxClient {
 fn tsp_rustdx_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RustdxClient>()?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    module.add("RUSTDX_VERSION", RUSTDX_VERSION)?;
+    module.add("RUSTDX_SOURCE_REV", RUSTDX_SOURCE_REV)?;
     module.add("MAX_CONNECTIONS", MAX_CONNECTIONS)?;
     module.add("QUOTE_BATCH_SIZE", QUOTE_BATCH_SIZE)?;
     Ok(())

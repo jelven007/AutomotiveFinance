@@ -21,6 +21,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from app.market_scope import clean_market_config, removed_market_symbol
 from app.services.fs_utils import atomic_write_text
 from app.strategy.custom_signals import ALLOWED_FIELDS
 from app.strategy.intraday_signals import uses_intraday_signals
@@ -101,7 +102,7 @@ def load_one(data_dir: Path, rule_id: str) -> dict | None:
 def save_one(data_dir: Path, rule: dict) -> None:
     p = _path(data_dir, rule["id"])
     p.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(p, json.dumps(rule, ensure_ascii=False, indent=2))
+    atomic_write_text(p, json.dumps(clean_market_config(rule), ensure_ascii=False, indent=2))
 
 
 def delete_one(data_dir: Path, rule_id: str) -> bool:
@@ -301,6 +302,8 @@ def validate(rule: dict) -> None:
         syms = rule.get("symbols")
         if not isinstance(syms, list) or len(syms) == 0:
             raise ValueError("scope=symbols 时 symbols 不能为空")
+        if any(removed_market_symbol(symbol) for symbol in syms):
+            raise ValueError("监控标的仅支持沪深市场")
     if rule.get("scope") == "watchlist_group":
         # 动态绑定自选分组: 评估时实时解析成员 (分组后续增删自动生效)。
         # 分组存在性由 API 层在保存时校验 (strategy 层不依赖 services)。
@@ -327,7 +330,7 @@ def validate(rule: dict) -> None:
 
 def normalize(rule: dict) -> dict:
     """补全默认字段,返回规范化后的规则 (不校验)。"""
-    r = dict(rule)
+    r = clean_market_config(dict(rule))
     r.setdefault("enabled", True)
     r.setdefault("asset_type", "stock")
     # sector/abnormal 默认全市场 (sector 随后强制 all; abnormal 支持指定标的)

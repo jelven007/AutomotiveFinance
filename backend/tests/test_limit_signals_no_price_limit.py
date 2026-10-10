@@ -2,7 +2,7 @@
 
 注册制新股上市前 5 个交易日无涨跌幅限制, 数据源在维表 limit_up 填上万的占位值。
 实时路径 (_compute_limit_signals_today) 识别该哨兵后涨停/跌停/炸板/翘板一律为 False;
-盘后全量 (compute_limit_signals) 只把哨兵排除出「权威价」, 随后回退按 10%/20%/30%
+盘后全量 (compute_limit_signals) 只把哨兵排除出「权威价」, 随后回退按 10%/20%
 理论价判断, 于是新股当日涨超 10% 就被记为涨停、连板数 +1, 收盘后看板涨停家数、
 连板梯队与涨停类策略都会把它算进去, 与盘中结论相反。
 
@@ -19,7 +19,6 @@ import pytest
 
 from app.indicators import pipeline
 from app.price_limits import (
-    BJ_OPENING_DATE,
     GEM_REGISTRATION_DATE,
     MAIN_BOARD_REGISTRATION_DATE,
     is_no_limit_day,
@@ -129,17 +128,17 @@ def test_regular_stock_limit_up_unchanged():
 
 def test_window_days_by_board_and_listing_date():
     listing = date(2026, 9, 17)
-    # 沪主板 / 创业板 / 科创板 / 北交所: 注册制后上市 → 窗口 5 / 5 / 5 / 1
+    # 沪主板 / 创业板 / 科创板: 注册制后上市 → 窗口 5 / 5 / 5
     assert no_limit_window_days("601091.SH", listing) == 5
     assert no_limit_window_days("301234.SZ", listing) == 5
     assert no_limit_window_days("688001.SH", listing) == 5
-    assert no_limit_window_days("920001.BJ", listing) == 1
+    with pytest.raises(ValueError, match="不支持"):
+        no_limit_window_days("920001.BJ", listing)
     # 注册制改革前上市的老股 → 不适用
     assert no_limit_window_days("600001.SH", MAIN_BOARD_REGISTRATION_DATE) == 5
     assert no_limit_window_days("600001.SH", date(2023, 2, 16)) == 0
     assert no_limit_window_days("300001.SZ", GEM_REGISTRATION_DATE) == 5
     assert no_limit_window_days("300001.SZ", date(2020, 8, 23)) == 0
-    assert no_limit_window_days("920001.BJ", BJ_OPENING_DATE) == 1
     assert no_limit_window_days("600001.SH", None) == 0
 
 
@@ -149,9 +148,8 @@ def test_is_no_limit_day_with_day_rank_exact():
     assert is_no_limit_day("601091.SH", listing, date(2026, 9, 10), day_rank=1) is True
     assert is_no_limit_day("601091.SH", listing, date(2026, 9, 16), day_rank=5) is True
     assert is_no_limit_day("601091.SH", listing, date(2026, 9, 17), day_rank=6) is False
-    # 北交所仅首日
-    assert is_no_limit_day("920001.BJ", listing, listing, day_rank=1) is True
-    assert is_no_limit_day("920001.BJ", listing, date(2026, 9, 11), day_rank=2) is False
+    with pytest.raises(ValueError, match="不支持"):
+        is_no_limit_day("920001.BJ", listing, listing, day_rank=1)
 
 
 def test_full_path_listing_date_window_marks_no_limit_on_stale_as_of():

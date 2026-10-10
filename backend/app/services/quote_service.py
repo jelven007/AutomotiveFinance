@@ -864,6 +864,8 @@ class QuoteService:
         返回竞价前旧价时把陈旧收盘价固化到当日分区。
         """
         from app.services import preferences
+        from app.market_scope import removed_market_symbol
+        records = [r for r in records if not removed_market_symbol(r.get("symbol"))]
         all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
         core_index_symbols = set(CORE_INDEX_SYMBOLS)
         all_index_symbols.update(core_index_symbols)
@@ -893,6 +895,8 @@ class QuoteService:
             r for r in records
             if r.get("symbol") not in all_index_symbols and r.get("symbol") not in all_etf_symbols
         ]
+        from app.market_scope import supported_symbol
+        stock_records = [r for r in stock_records if supported_symbol(r.get("symbol"), "stock")]
 
         fetch_ms = (time.perf_counter() - t0) * 1000
         fetched_at = time.time() * 1000
@@ -984,7 +988,8 @@ class QuoteService:
         for _r in list(engine.rules.values()):
             if _r.get("enabled", True) and _r.get("asset_type") == "index" and _r.get("scope") == "symbols":
                 out.update(s for s in _r.get("symbols", []) if s)
-        return out
+        from app.market_scope import supported_symbol
+        return {s for s in out if supported_symbol(s, "index")}
 
     @staticmethod
     @staticmethod

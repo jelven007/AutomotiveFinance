@@ -147,13 +147,13 @@ function patchMatrix(
 }
 
 const DEFAULT_ROUTING: Record<ProviderField, string> = {
-  daily_data_provider: 'mootdx',
-  adj_factor_provider: 'mootdx',
-  minute_data_provider: 'mootdx',
-  full_minute_data_provider: 'mootdx',
-  depth5_data_provider: 'mootdx',
-  realtime_data_provider: 'mootdx',
-  financial_data_provider: 'mootdx',
+  daily_data_provider: 'rustdx',
+  adj_factor_provider: 'rustdx',
+  minute_data_provider: 'rustdx',
+  full_minute_data_provider: 'rustdx',
+  depth5_data_provider: 'rustdx',
+  realtime_data_provider: 'rustdx',
+  financial_data_provider: 'rustdx',
 }
 
 const TICKFLOW_ROUTING: Record<ProviderField, string> = {
@@ -568,14 +568,14 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
   const prefs = usePreferences()
   const sources = useQuery({ queryKey: QK.dataSources, queryFn: api.dataSources })
   const matrix = useQuery({ queryKey: QK.capabilityMatrix, queryFn: api.capabilityMatrix })
-  const [selected, setSelected] = useState<string>('mootdx') // 当前在下方配置的源 name
+  const [selected, setSelected] = useState<string>('rustdx') // 当前在下方配置的源 name
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   const builtin: DataSourceItem[] = sources.data?.builtin ?? []
   const pluginList: PluginDataSourceItem[] = sources.data?.plugins ?? []
   const customList: DataSourceItem[] = sources.data?.custom ?? []
   const errors = sources.data?.errors ?? []
-  const activeName = prefs.data?.daily_data_provider || 'mootdx'
+  const activeName = prefs.data?.daily_data_provider || 'rustdx'
 
   const pluginItems: DataSourceItem[] = pluginList.map(p => ({
     name: p.name, display_name: p.display_name, datasets: p.datasets,
@@ -591,16 +591,16 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
 
   // ===== 各能力当前的有效提供方 (除权 same_as_daily = 跟随日K) =====
   // 用于能力芯片"服务中"态与详情卡标识: 路由切换在上方能力路由区, 这里只读展示
-  const dailyPref = prefs.data?.daily_data_provider || 'mootdx'
-  const adjPref = prefs.data?.adj_factor_provider || 'mootdx'
+  const dailyPref = prefs.data?.daily_data_provider || 'rustdx'
+  const adjPref = prefs.data?.adj_factor_provider || 'rustdx'
   const effProvider: Record<string, string> = {
     daily: dailyPref,
     adj_factor: adjPref === 'same_as_daily' ? dailyPref : adjPref,
-    minute: prefs.data?.minute_data_provider || 'mootdx',
-    full_minute: prefs.data?.full_minute_data_provider || 'mootdx',
-    realtime: prefs.data?.realtime_data_provider || 'mootdx',
-    depth5: prefs.data?.depth5_data_provider || 'mootdx',
-    financial: prefs.data?.financial_data_provider || 'mootdx',
+    minute: prefs.data?.minute_data_provider || 'rustdx',
+    full_minute: prefs.data?.full_minute_data_provider || 'rustdx',
+    realtime: prefs.data?.realtime_data_provider || 'rustdx',
+    depth5: prefs.data?.depth5_data_provider || 'rustdx',
+    financial: prefs.data?.financial_data_provider || 'rustdx',
   }
   const servingDatasets = (name: string) =>
     Object.entries(effProvider).filter(([, v]) => v === name).map(([k]) => k)
@@ -629,7 +629,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
     mutationFn: (name: string) => api.deleteDataSource(name),
     onSuccess: () => {
       invalidateSources()
-      setSelected('mootdx')
+      setSelected('rustdx')
       setConfirmDelete(null)
       toast('数据源已删除', 'success')
     },
@@ -645,7 +645,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
         allItems.find(s => s.name === name)?.datasets ?? []
       )
       const pick = (dataset: string) =>
-        supported.has(dataset) ? name : DEFAULT_ROUTING[`${dataset}_data_provider` as ProviderField] ?? 'mootdx'
+        supported.has(dataset) ? name : DEFAULT_ROUTING[`${dataset}_data_provider` as ProviderField] ?? 'rustdx'
       return api.updateDataProviders({
         daily_data_provider: pick('daily'),
         adj_factor_provider: pick('adj_factor'),
@@ -915,10 +915,10 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                 key={selected}
                 initial={null}
                 existingName={undefined}
-                onCancel={() => setSelected('mootdx')}
+                onCancel={() => setSelected('rustdx')}
                 onSaved={() => {
                   invalidateSources()
-                  setSelected('mootdx')
+                  setSelected('rustdx')
                 }}
                 activeName={activeName}
                 onActivate={(name) => switchProvider.mutate(name)}
@@ -928,7 +928,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                 key={selected}
                 initial={null}
                 existingName={selected}
-                onCancel={() => setSelected('mootdx')}
+                onCancel={() => setSelected('rustdx')}
                 onSaved={() => {
                   invalidateSources()
                   // 强制清除该源的详情缓存, 下次编辑重新拉取最新配置
@@ -1161,7 +1161,7 @@ function TickFlowDetail({ active, matrix }: { active: boolean; matrix?: Capabili
           </div>
           <p className="text-xs text-secondary mt-1.5 leading-relaxed">
             可选数据源,每个能力所需订阅档位见下表 — 当前档位未解锁的能力不会出现在上方「能力路由」的选项里。
-            未单独设置的能力默认由 mootdx 提供;也可在数据源区切换为 TickFlow 或其他插件。
+            未单独设置的能力默认由 rustdx 提供;也可在数据源区切换为 TickFlow 或其他插件。
           </p>
         </div>
       </div>

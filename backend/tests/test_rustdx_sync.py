@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 
 from app.data_providers import custom as custom_sources
-from app.plugins.mootdx.provider import MootdxProvider
+from app.plugins.rustdx.provider import RustdxProvider
 from app.services import index_sync, instrument_sync, kline_sync, preferences
 from app.tickflow.capabilities import Cap, CapabilityLimits, CapabilitySet
 from app.tickflow.repository import DataStore, KlineRepository
@@ -14,16 +14,16 @@ from app.tickflow.repository import DataStore, KlineRepository
 
 @pytest.fixture
 def selected(monkeypatch):
-    provider = MootdxProvider()
-    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "mootdx")
-    monkeypatch.setattr(preferences, "get_adj_factor_provider", lambda: "mootdx")
-    monkeypatch.setattr(custom_sources, "is_custom_provider", lambda name: name == "mootdx")
+    provider = RustdxProvider()
+    monkeypatch.setattr(preferences, "get_daily_data_provider", lambda: "rustdx")
+    monkeypatch.setattr(preferences, "get_adj_factor_provider", lambda: "rustdx")
+    monkeypatch.setattr(custom_sources, "is_custom_provider", lambda name: name == "rustdx")
     monkeypatch.setattr(custom_sources, "get_provider", lambda name: provider)
-    monkeypatch.setattr(custom_sources, "provider_has_dataset", lambda name, ds: name == "mootdx")
+    monkeypatch.setattr(custom_sources, "provider_has_dataset", lambda name, ds: name == "rustdx")
     for module in (index_sync, instrument_sync, kline_sync):
         monkeypatch.setattr(
             module, "get_client",
-            lambda: pytest.fail("An explicitly selected mootdx operation must not call TickFlow"),
+            lambda: pytest.fail("An explicitly selected rustdx operation must not call TickFlow"),
         )
     return provider
 
@@ -138,7 +138,7 @@ def test_missing_daily_capability_never_uses_tickflow(tmp_path, selected, monkey
 
 @pytest.mark.parametrize("failure", ["missing", "resolve", "fetch", "schema"])
 def test_minute_failure_never_uses_tickflow(tmp_path, selected, monkeypatch, failure):
-    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_minute_data_provider", lambda: "rustdx")
 
     def fail(*args, **kwargs):
         raise RuntimeError("offline")
@@ -195,12 +195,12 @@ def test_tickflow_partial_catalog_does_not_overwrite(tmp_path, monkeypatch):
     ("financial_data_provider", preferences.get_financial_provider),
 ])
 def test_missing_plugin_dependency_preserves_selection(monkeypatch, key, getter):
-    monkeypatch.setattr(preferences, "load", lambda: {key: "mootdx"})
+    monkeypatch.setattr(preferences, "load", lambda: {key: "rustdx"})
     monkeypatch.setattr(custom_sources, "names", lambda: set())
     monkeypatch.setattr(
-        custom_sources, "list_plugins", lambda: [{"name": "mootdx", "available": False}],
+        custom_sources, "list_plugins", lambda: [{"name": "rustdx", "available": False}],
     )
-    assert getter() == "mootdx"
+    assert getter() == "rustdx"
 
 
 def test_single_adjustment_fetch_follows_selected_provider(selected, monkeypatch):
@@ -214,7 +214,7 @@ def test_single_adjustment_fetch_follows_selected_provider(selected, monkeypatch
 def test_unavailable_realtime_does_not_replace_cache(selected, monkeypatch):
     from app.services.quote_service import QuoteService
 
-    monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "rustdx")
     monkeypatch.setattr(custom_sources, "provider_has_dataset", lambda *a: False)
     monkeypatch.setattr(
         "app.tickflow.client.get_paid_realtime_client",
@@ -230,7 +230,7 @@ def test_unavailable_realtime_does_not_replace_cache(selected, monkeypatch):
 def test_unavailable_financial_source_returns_empty(selected, monkeypatch):
     from app.services.financial_sync import _fetch_table
 
-    monkeypatch.setattr(preferences, "get_financial_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_financial_provider", lambda: "rustdx")
     monkeypatch.setattr(custom_sources, "provider_has_dataset", lambda *a: False)
     monkeypatch.setattr("app.tickflow.client.get_client", lambda: pytest.fail("must not use TickFlow"))
     assert _fetch_table(
@@ -244,7 +244,7 @@ def test_unavailable_full_minute_source_never_calls_tickflow(tmp_path, selected,
 
     from app.services.minute_refresh import MinuteRefreshService
 
-    monkeypatch.setattr(preferences, "get_full_minute_data_provider", lambda: "mootdx")
+    monkeypatch.setattr(preferences, "get_full_minute_data_provider", lambda: "rustdx")
     monkeypatch.setattr(custom_sources, "provider_has_dataset", lambda *a: False)
     monkeypatch.setattr(
         kline_sync, "fetch_intraday_full_market_burst",
@@ -258,7 +258,7 @@ def test_unavailable_full_minute_source_never_calls_tickflow(tmp_path, selected,
         ))
         assert service.capability_ok() is False
         service._run_round()
-        assert service._resolve_custom()[1] == "mootdx"
+        assert service._resolve_custom()[1] == "rustdx"
         assert service._state.last_error is not None
     finally:
         repo.db.close()

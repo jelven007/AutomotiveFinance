@@ -691,22 +691,15 @@ def install_plugin(name: str) -> dict:
 def uninstall_plugin(name: str) -> dict:
     """卸载指定插件的依赖 (删除 node_modules / pip uninstall), 完成后重新扫描。
 
-    如果该插件当前正被使用, 自动回退到 tickflow。
+    如果该插件当前正被使用, 将相应路由恢复为 rustdx。
     """
     from app.data_providers import custom as custom_sources
     from app.services import preferences
     if not custom_sources.is_builtin(name):
         raise HTTPException(status_code=404, detail=f"插件 '{name}' 不存在")
     ok, message = custom_sources.uninstall_plugin(name)
-    # 卸载后若该插件正被使用, 回退 tickflow
-    for getter, key, default in [
-        (preferences.get_daily_data_provider, "daily_data_provider", "tickflow"),
-        (preferences.get_minute_data_provider, "minute_data_provider", "tickflow"),
-        (preferences.get_realtime_data_provider, "realtime_data_provider", "tickflow"),
-        (preferences.get_financial_provider, "financial_data_provider", "tickflow"),
-    ]:
-        if getter() == name:
-            preferences.save({key: default})
+    if ok:
+        preferences.reset_data_provider(name)
     custom_sources.load_all()
     result = list_data_sources()
     result["uninstall_ok"] = ok
@@ -742,7 +735,7 @@ def save_data_source(req: CustomSourceIn) -> dict:
 def delete_data_source(name: str, request: Request) -> dict:
     """删除一个自定义数据源 yaml, 保存后自动 reload。
 
-    若当前总开关选中的就是被删的源, 回退到 tickflow。
+    引用了被删源的各项能力恢复为 rustdx。
     """
     from app.data_providers import custom as custom_sources
     from app.services import preferences
@@ -750,24 +743,13 @@ def delete_data_source(name: str, request: Request) -> dict:
         custom_sources.delete_config(name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    preferences.reset_data_provider(name)
     custom_sources.load_all()
-    # 回退被删源的偏好
-    updates: dict = {}
-    if preferences.get_daily_data_provider() == name:
-        updates["daily_data_provider"] = "tickflow"
-    if preferences.get_realtime_data_provider() == name:
-        updates["realtime_data_provider"] = "tickflow"
-    if preferences.get_financial_provider() == name:
-        updates["financial_data_provider"] = "tickflow"
-    if preferences.get_adj_factor_provider() == name:
-        updates["adj_factor_provider"] = "tickflow"
-    if updates:
-        preferences.save(updates)
-        from app.services import data_integrity, trading_day
+    from app.services import data_integrity, trading_day
 
-        data_integrity.reset_calendar_cache()
-        trading_day.reset_cache()
-    # 删除源可能触发偏好回退 tickflow, 同步刷新能力快照
+    data_integrity.reset_calendar_cache()
+    trading_day.reset_cache()
+    # 删除源后同步刷新能力快照。
     request.app.state.capabilities = detect_capabilities()
     return list_data_sources()
 

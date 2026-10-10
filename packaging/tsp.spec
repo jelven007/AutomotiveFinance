@@ -46,7 +46,7 @@ binaries = []
 hiddenimports = []
 
 for pkg in (
-    "polars", "pyarrow", "duckdb", "fastexcel", "mootdx", "tdxpy",
+    "polars", "pyarrow", "duckdb", "fastexcel",
     "tsp_rustdx_native",
 ):
     if find_spec(pkg) is None:
@@ -130,7 +130,7 @@ for pkg in (
     "tickflow",  # tickflow/__version__.py 用 importlib.metadata 读版本
     "uvicorn", "polars", "duckdb", "pyarrow", "httpx", "numpy", "pandas",
     "openai", "platformdirs", "winotify", "plyer", "apscheduler",
-    "python-dotenv", "fastexcel", "mootdx", "tdxpy", "tsp-rustdx-native",
+    "python-dotenv", "fastexcel", "tsp-rustdx-native",
     # 桌面启动诊断和 Windows GUI 后端会读取这些发行包的元数据。冻结包必须
     # 一并收集，避免 importlib.metadata.version() 抛 PackageNotFoundError。
     "pywebview", "pythonnet", "clr-loader",

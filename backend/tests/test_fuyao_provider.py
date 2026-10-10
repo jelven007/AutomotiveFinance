@@ -416,8 +416,8 @@ def test_loader_probe_plugin_key_dispatch(monkeypatch):
 def test_loader_probe_plugin_key_unsupported_plugin():
     from app.data_providers.custom import loader
 
-    # mootdx 未声明 api_key_env → 不支持界面配 Key
-    ok, reason = loader.probe_plugin_key("mootdx", "x")
+    # rustdx 未声明 api_key_env → 不支持界面配 Key
+    ok, reason = loader.probe_plugin_key("rustdx", "x")
     assert ok is False and "不支持" in reason
     ok, reason = loader.probe_plugin_key("no_such_plugin", "x")
     assert ok is False and "不存在" in reason

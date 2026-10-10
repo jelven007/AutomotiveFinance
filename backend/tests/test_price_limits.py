@@ -28,7 +28,6 @@ from app.price_limits import (
         ("300001.SZ", date(2026, 7, 3), True, 0.20),
         ("688001.SH", date(2026, 7, 3), True, 0.20),
         ("689001.SH", date(2026, 7, 3), True, 0.20),
-        ("830001.BJ", date(2026, 7, 3), True, 0.30),
     ],
 )
 def test_scalar_price_limit_rules(symbol, trade_date, is_st, expected):
@@ -41,8 +40,8 @@ def test_scalar_price_limit_rules(symbol, trade_date, is_st, expected):
 
 def test_polars_and_numpy_price_limit_rules_match():
     dates = [date(2026, 7, 3), date(2026, 7, 6)]
-    symbols = ["600001.SH", "300001.SZ", "689001.SH", "830001.BJ"]
-    names = ["*st主板", "*ST创业", "科创ST", "北交ST"]
+    symbols = ["600001.SH", "300001.SZ", "689001.SH", "003001.SZ"]
+    names = ["*st主板", "*ST创业", "科创ST", "深主板ST"]
     panel = pl.DataFrame({
         "date": [value for value in dates for _ in symbols],
         "symbol": symbols * len(dates),

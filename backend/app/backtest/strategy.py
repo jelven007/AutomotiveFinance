@@ -510,6 +510,7 @@ _STOCK_ONLY_FILTER_KEYS = (
     "price_min",
     "price_max",
     "boards",
+    "market_scope_empty",
 )
 
 

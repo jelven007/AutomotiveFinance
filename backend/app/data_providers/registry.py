@@ -8,8 +8,15 @@ _PROVIDERS = {
 }
 
 
-def get_provider(name: str = "tickflow"):
-    provider_cls = _PROVIDERS.get((name or "tickflow").lower())
+def get_provider(name: str = "rustdx"):
+    name = (name or "rustdx").lower()
+    if name == "rustdx":
+        from app.plugins.rustdx.provider import RustdxProvider
+
+        return RustdxProvider()
+    provider_cls = _PROVIDERS.get(name)
     if provider_cls is None:
-        raise ValueError(f"Unsupported data provider: {name}")
+        from app.data_providers import custom as custom_sources
+
+        return custom_sources.get_provider(name)
     return provider_cls()

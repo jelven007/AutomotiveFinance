@@ -23,12 +23,13 @@
 | --- | --- |
 | 产品与使用 | [功能手册](./features.md)、[操作说明书](../操作说明书.md) |
 | 部署与配置 | [部署指南](./deployment.md)、[配置说明](./configuration.md)、[公网邮箱账户](./deploy-password.md) |
-| 数据源 | [自定义数据源](./custom-data-source.md)、[mootdx 数据源](./mootdx-data-source.md)、[rustdx 数据源](./rustdx-data-source.md)、[插件开发](./plugin-development.md) |
+| 数据源 | [自定义数据源](./custom-data-source.md)、[rustdx 数据源](./rustdx-data-source.md)、[插件开发](./plugin-development.md) |
 | TickFlow 专项 | [Pro 一阶段探测](./tickflow-pro-phase1-probe.md)、[共享限流](./tickflow-pro-shared-rate-limit.md) |
 | 策略与研究 | [策略开发](./strategy.md)、[策略迭代](./strategy-iteration.md)、[因子平台方案](./factor-platform-plan.md)、[因子系统设计](./factor-system-design.md)、[因子挖掘](./mining.md) |
 | 市场与交易 | [市场阶段](./market-phase.md)、[模拟盘](./paper-trading-plan.md) |
 | 开放能力 | [开放平台](./open-platform-plan.md)、[MCP 服务器](../mcp-server/README.md)、[Open API 示例](../examples/open-api/README.md) |
 | 验证记录 | [技术验证记录](./technical-validation.md) |
+| 当前项目分析 | [2026-10-10 架构、rustdx 与生产状态分析](./project-analysis-20261010.md) |
 | 二次开发 | [二次开发指南](./secondary-development.md)、[自定义数据源示例](./examples/custom-data-source/README.md) |
 
 ## 文档类型与状态

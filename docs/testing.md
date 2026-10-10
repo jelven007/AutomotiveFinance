@@ -127,7 +127,7 @@ tag 和手动构建会在 workflow 内重新运行同等的后端与前端质量
 依赖安装和全量 pytest，前端执行 frozen 安装、Vitest、ESLint 与生产构建。只有
 版本校验和质量门都通过后，Windows、macOS、Linux 打包矩阵才会启动。Windows
 runner 会实际运行 PyInstaller 便携版，并对 Inno Setup 产物执行静默安装、启动、
-健康检查、默认 mootdx 插件检查、卸载及用户数据保留验证。
+健康检查、默认 rustdx 插件检查、卸载及用户数据保留验证。
 
 当前 CI 不自动执行以下检查，发布负责人需按变更风险补充：
 
@@ -197,7 +197,7 @@ Provider 时，至少记录：
 5. 空数据、超时、限流和不支持能力的表现。
 6. 结果是否落盘，以及重启后能否读取。
 
-mootdx 的专项验证见[mootdx 数据源说明](./mootdx-data-source.md)。
+rustdx 的专项验证见[rustdx 数据源说明](./rustdx-data-source.md)。
 
 ## 9. 人工端到端验收
 

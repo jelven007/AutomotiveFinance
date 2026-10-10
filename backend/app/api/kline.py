@@ -1260,7 +1260,7 @@ async def trigger_minute_sync(repo, capset, *, override_days=None, extend_flag=N
         try:
             progress("sync_minute", 5, "解析标的池…")
             universe = sorted(set(get_pool("watchlist")) | set(get_pool("CN_Equity_A")))
-            # 补充 instruments 全量标的，覆盖北交所、新股等
+            # 补充 instruments 全量标的, 覆盖新股等
             inst_path = repo.store.data_dir / "instruments" / "instruments.parquet"
             if inst_path.exists():
                 try:

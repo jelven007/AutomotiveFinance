@@ -42,14 +42,14 @@ class _FakeWindow:
         self.destroyed = True
 
 
-def test_smoke_plugin_validation_accepts_both_built_in_tdx_providers() -> None:
+def test_smoke_plugin_validation_accepts_default_rustdx_provider() -> None:
     desktop._validate_smoke_plugins(
         [
             {
                 "name": name,
                 "available": True,
-                "datasets": sorted(desktop._MOOTDX_DATASETS),
-            } for name in ("rustdx", "mootdx")
+                "datasets": sorted(desktop._RUSTDX_DATASETS),
+            } for name in ("rustdx",)
         ]
     )
 
@@ -77,15 +77,14 @@ def test_find_free_port_skips_an_active_listener() -> None:
     "plugin",
     [
         None,
-        {"name": "mootdx", "available": False, "status": "missing"},
-        {"name": "mootdx", "available": True, "datasets": ["daily"]},
+        {"name": "rustdx", "available": False, "status": "missing"},
+        {"name": "rustdx", "available": True, "datasets": ["daily"]},
     ],
 )
-def test_smoke_plugin_validation_rejects_incomplete_mootdx(plugin: dict | None) -> None:
-    with pytest.raises(RuntimeError, match="mootdx"):
+def test_smoke_plugin_validation_rejects_incomplete_rustdx(plugin: dict | None) -> None:
+    with pytest.raises(RuntimeError, match="rustdx"):
         desktop._validate_smoke_plugins(
-            [{"name": "rustdx", "available": True, "datasets": sorted(desktop._MOOTDX_DATASETS)}]
-            + ([] if plugin is None else [plugin])
+            [] if plugin is None else [plugin]
         )
 
 
@@ -106,7 +105,6 @@ def test_windows_installer_contract() -> None:
 def test_pyinstaller_collects_default_data_provider() -> None:
     spec = (ROOT / "packaging" / "tsp.spec").read_text(encoding="utf-8")
 
-    assert '"mootdx", "tdxpy",' in spec
     assert '"tsp_rustdx_native",' in spec
     assert 'BUILTIN_PLUGINS.glob("*/plugin.yaml")' in spec
     assert '"tsp-rustdx-native",' in spec

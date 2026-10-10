@@ -13,7 +13,7 @@
 
 TSP 是持续维护的专用版本，当前重点是：
 
-- 默认使用 `rustdx` 建立沪深行情数据层，保留 mootdx 等可选 Provider。
+- 默认使用 `rustdx` 建立沪深行情数据层，保留 TickFlow、fuyao 作为备选 Provider。
 - 将选股、信号、因子、回测、监控和复盘统一到同一份标准化数据口径。
 - 对策略结果提供可追溯的配置、数据版本、费用和风险指标。
 - 同时支持本地桌面运行和服务端部署，并明确区分两种环境的认证边界。
@@ -227,14 +227,13 @@ git diff --check
 | [运维手册](./docs/operations.md) | 巡检、备份、恢复和故障处理 |
 | [发布流程](./docs/release-operations.md) | 版本、产物、上线和回滚 |
 | [二次开发](./docs/secondary-development.md) | 扩展点和核心修改规则 |
-| [mootdx 数据源](./docs/mootdx-data-source.md) | 数据能力、限制和验证 |
 | [rustdx 数据源](./docs/rustdx-data-source.md) | 默认路由、35 连接池和历史财务 |
 | [策略开发](./docs/strategy.md) | 内置、自定义和 AI 策略 |
 | [MCP 服务器](./mcp-server/README.md) | AI 客户端接入 |
 
 ## 第三方组件与数据源
 
-项目会按配置使用第三方依赖和数据服务，包括 `mootdx`、TickFlow、fuyao、OpenAI、
+项目会按配置使用第三方依赖和数据服务，包括 `rustdx`、TickFlow、fuyao、OpenAI、
 DeepSeek、GLM 等。仓库中的链接用于说明功能或许可证，不代表合作、背书或可用性
 承诺。部署者必须自行确认服务条款、数据授权、隐私政策和网络可达性。
 

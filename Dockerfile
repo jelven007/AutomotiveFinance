@@ -118,16 +118,6 @@ RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
     done; \
     uv sync --frozen "$@"
 
-# 内置 mootdx 在容器内预装，避免通过设置页安装后因重建容器丢失。
-# 主包跳过其旧版 httpx 依赖，继续使用后端锁文件中的兼容版本。
-COPY backend/app/plugins/mootdx/requirements.txt \
-     backend/app/plugins/mootdx/requirements-no-deps.txt \
-     /tmp/mootdx/
-RUN uv pip install --python /app/.venv/bin/python -r /tmp/mootdx/requirements.txt \
-    && uv pip install --python /app/.venv/bin/python --no-deps \
-       -r /tmp/mootdx/requirements-no-deps.txt \
-    && rm -rf /tmp/mootdx
-
 # Install the default rustdx route's wheel built for this target architecture.
 COPY --from=rustdx-builder /wheels /tmp/rustdx-wheels
 RUN uv pip install --python /app/.venv/bin/python /tmp/rustdx-wheels/*.whl \

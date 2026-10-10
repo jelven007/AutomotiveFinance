@@ -187,14 +187,6 @@ jobs:
         # 不加 --extra backtest, 主包不含 vectorbt/numba/llvmlite
         run: uv sync --no-dev --extra desktop --extra legacy-cpu --extra rustdx
 
-      - name: 安装内置 mootdx 行情依赖
-        working-directory: backend
-        # 与 Dockerfile 保持同一安装策略: mootdx 本体跳过过时的 httpx<0.26
-        # 传递约束，继续使用主项目锁定的 httpx；其余运行时依赖正常安装。
-        run: |
-          uv pip install --python .venv -r app/plugins/mootdx/requirements.txt
-          uv pip install --python .venv --no-deps -r app/plugins/mootdx/requirements-no-deps.txt
-
       - name: 安装 PyInstaller
         # 必须装进 backend 的 uv 环境 (pywebview/polars 等依赖都在那里),
         # 否则根目录 uv run 找不到依赖, 打包出来的产物启动即崩。

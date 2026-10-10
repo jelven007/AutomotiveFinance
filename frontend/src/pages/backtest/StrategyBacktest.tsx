@@ -182,7 +182,7 @@ Object.assign(FIELD_LABEL, {
   boll_upper: '布林上轨', boll_lower: '布林下轨',
   ma20_bias: 'MA20乖离率',
 })
-const BOARD_OPTIONS = ['沪主板', '深主板', '创业板', '科创板', '北交所']
+const BOARD_OPTIONS = ['沪主板', '深主板', '创业板', '科创板']
 // 与策略编辑器「基础参数」对齐 (engine._basic_filter_expr 支持的全部数值界),
 // 每项 min~max 成对, 面板可见即可改, 避免策略里已生效的界在回测侧不可见。
 const BASIC_FILTER_RANGES = [

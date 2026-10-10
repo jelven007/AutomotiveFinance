@@ -15,17 +15,17 @@ from app.strategy.engine import StrategyEngine
 
 def _audit() -> dict:
     routes = {
-        capability["id"]: {"provider": "mootdx", "usable": True}
+        capability["id"]: {"provider": "rustdx", "usable": True}
         for capability in provider_audit.CAPABILITY_REGISTRY
     }
     return {
         "status": "ok",
         "healthy": True,
-        "policy": "mootdx_only",
+        "policy": "rustdx_only",
         "single_source": True,
-        "mootdx_only": True,
+        "rustdx_only": True,
         "mixed_sources": False,
-        "sources": ["mootdx"],
+        "sources": ["rustdx"],
         "routes": routes,
         "unavailable": [],
         "issues": [],
@@ -103,7 +103,7 @@ def test_invalid_current_manifest_fails_closed(tmp_path) -> None:
     ("datasets", {"stock_enriched": {"state": []}}),
     ("datasets", {"stock_enriched": {"partition_count": -1}}),
     ("datasets", {"stock_enriched": {"latest_partition": "bad-date"}}),
-    ("providers", ["mootdx"]),
+    ("providers", ["rustdx"]),
 ])
 def test_nested_manifest_corruption_is_reported(tmp_path, monkeypatch, field, value) -> None:
     monkeypatch.setattr(data_release, "audit_provider_routes", _audit)
@@ -248,17 +248,17 @@ def _matrix(routes: dict[str, str], unusable: set[str] | None = None) -> dict:
     }
 
 
-def test_provider_audit_distinguishes_mootdx_only_and_mixed(
+def test_provider_audit_distinguishes_rustdx_only_and_mixed(
     monkeypatch,
 ) -> None:
-    all_mootdx = {
-        capability["field"]: "mootdx"
+    all_rustdx = {
+        capability["field"]: "rustdx"
         for capability in provider_audit.CAPABILITY_REGISTRY
     }
     monkeypatch.setattr(
         provider_audit,
         "current_provider_routes",
-        lambda: dict(all_mootdx),
+        lambda: dict(all_rustdx),
     )
     monkeypatch.setattr(
         provider_audit,
@@ -268,9 +268,9 @@ def test_provider_audit_distinguishes_mootdx_only_and_mixed(
 
     audit = provider_audit.audit_provider_routes(tickflow_tier="none")
     assert audit["status"] == "ok"
-    assert audit["mootdx_only"] is True
+    assert audit["rustdx_only"] is True
 
-    mixed = dict(all_mootdx)
+    mixed = dict(all_rustdx)
     mixed["financial_data_provider"] = "tickflow"
     monkeypatch.setattr(
         provider_audit,
@@ -279,18 +279,17 @@ def test_provider_audit_distinguishes_mootdx_only_and_mixed(
     )
     audit = provider_audit.audit_provider_routes(tickflow_tier="none")
     assert audit["status"] == "warning"
-    assert audit["policy"] == "mixed_with_mootdx"
-    assert audit["issues"][0]["code"] == "mootdx_mixed_sources"
+    assert audit["policy"] == "mixed_with_rustdx"
+    assert audit["issues"][0]["code"] == "rustdx_mixed_sources"
 
     monkeypatch.setattr(
         provider_audit, "current_provider_routes",
-        lambda: {field: "rustdx" for field in all_mootdx},
+        lambda: {field: "rustdx" for field in all_rustdx},
     )
     audit = provider_audit.audit_provider_routes(tickflow_tier="none")
     assert audit["status"] == "ok"
     assert audit["policy"] == "rustdx_only"
     assert audit["rustdx_only"] is True
-    assert audit["mootdx_only"] is False
 
 
 def test_strategy_hash_changes_with_source_content(tmp_path) -> None:

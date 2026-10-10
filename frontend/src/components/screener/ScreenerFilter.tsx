@@ -59,11 +59,12 @@ export function countActiveFilters(f: ScreenerFilter): number {
 }
 
 export function applyFilter(rows: any[], f: ScreenerFilter): any[] {
+  rows = rows.filter(row => !/(\.BJ$|^(?:[48]\d{5}|92\d{4})(?:\.[A-Z]+)?$)/i.test(row.symbol))
   if (!filterActive(f)) return rows
   const num = (v: string) => v === '' ? null : Number(v)
   return rows.filter((r) => {
     // 板块: 用 symbol 判定板块, 必须在选中列表里
-    // 全选 5 个板块 = 不过滤 (等价于 boards:[]), 避免 getBoardType 返回 null 的边缘品种被误删
+    // 沪深四板块全选等价于不再限制板块。
     if (f.boards.length > 0 && f.boards.length < BOARDS.length) {
       const board = getBoardType(r.symbol)
       if (!board || !f.boards.includes(board)) return false

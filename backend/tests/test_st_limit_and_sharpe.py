@@ -22,7 +22,7 @@ from app.strategy.builtin.near_limit_up import MATRIX_STRATEGY
 def test_near_limit_pct_st_only_on_main_board():
     df = pl.DataFrame({
         "symbol": ["300001", "688001", "689001", "600001", "000001", "830001.BJ"],
-        "name": ["*ST创业", "科创ST", "科创ST", "*ST主板", "平安银行", "北交ST"],
+        "name": ["*ST创业", "科创ST", "科创ST", "*ST主板", "平安银行", "旧市场样本"],
         "date": [date(2024, 1, 2)] * 6,
         "open": [10.0] * 6,
         "high": [10.0] * 6,
@@ -39,7 +39,7 @@ def test_near_limit_pct_st_only_on_main_board():
     assert limit_by_symbol["689001"] == pytest.approx(0.20)  # 科创板 689 → 20%
     assert limit_by_symbol["600001"] == pytest.approx(0.05)  # 主板 ST → 5%
     assert limit_by_symbol["000001"] == pytest.approx(0.10)  # 主板普通 → 10%
-    assert limit_by_symbol["830001.BJ"] == pytest.approx(0.30)  # 北交所 → 30%
+    assert "830001.BJ" not in market.symbols
 
 
 def _two_day(

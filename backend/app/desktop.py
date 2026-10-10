@@ -43,7 +43,7 @@ _GUI_SMOKE_PAGE_SCRIPT = (
     "bodyTextLength: document.body?.innerText?.length ?? -1, "
     "htmlLength: document.documentElement?.outerHTML?.length ?? -1}))()"
 )
-_MOOTDX_DATASETS = {
+_RUSTDX_DATASETS = {
     "realtime",
     "daily",
     "adj_factor",
@@ -363,16 +363,16 @@ def _wait_for_server(
 
 def _validate_smoke_plugins(plugins: list[dict]) -> None:
     """确认默认行情插件在冻结产物内完整可加载。"""
-    for name in ("rustdx", "mootdx"):
+    for name in ("rustdx",):
         plugin = next((item for item in plugins if item.get("name") == name), None)
         if plugin is None:
             raise RuntimeError(f"{name} plugin manifest is missing")
         if not plugin.get("available"):
             raise RuntimeError(f"{name} plugin is unavailable: {plugin.get('status')}")
         datasets = set(plugin.get("datasets") or [])
-        if datasets != _MOOTDX_DATASETS:
+        if datasets != _RUSTDX_DATASETS:
             raise RuntimeError(
-                f"{name} datasets mismatch: expected={sorted(_MOOTDX_DATASETS)}, "
+                f"{name} datasets mismatch: expected={sorted(_RUSTDX_DATASETS)}, "
                 f"actual={sorted(datasets)}"
             )
 
