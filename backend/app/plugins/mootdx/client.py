@@ -346,9 +346,13 @@ class MootdxClient:
         import io
 
         from mootdx.affair import Affair
-        from mootdx.financial.financial import FinancialList, TdxHq_API
+        from mootdx.financial.financial import TdxHq_API
 
-        server = _server_from_env("MOOTDX_FINANCIAL_SERVER") or FinancialList().bestip
+        server = (
+            _server_from_env("MOOTDX_FINANCIAL_SERVER")
+            or _server_from_env()
+            or _DEFAULT_SERVER
+        )
         api = TdxHq_API(auto_retry=False, raise_exception=True)
         api.need_setup = False
         records: list[dict] = []

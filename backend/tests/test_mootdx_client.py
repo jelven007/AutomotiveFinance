@@ -7,7 +7,12 @@ import zipfile
 
 import pytest
 
-from app.plugins.mootdx.client import MootdxClient, MootdxError, _download_report
+from app.plugins.mootdx.client import (
+    MootdxClient,
+    MootdxError,
+    _DEFAULT_SERVER,
+    _download_report,
+)
 from app.plugins.mootdx.provider import MootdxProvider
 
 
@@ -135,6 +140,8 @@ def test_financial_archive_validates_hash_refreshes_and_parses_numeric_columns(
     tmp_path, monkeypatch,
 ):
     financial = pytest.importorskip("mootdx.financial.financial")
+    monkeypatch.delenv("MOOTDX_FINANCIAL_SERVER", raising=False)
+    monkeypatch.delenv("MOOTDX_SERVER", raising=False)
     state = {"payload": _archive(), "corrupt": False}
     requests = []
 
@@ -143,6 +150,7 @@ def test_financial_archive_validates_hash_refreshes_and_parses_numeric_columns(
             pass
 
         def connect(self, *args, **kwargs):
+            assert args == _DEFAULT_SERVER
             assert kwargs["time_out"] >= 2
 
         def close(self):
